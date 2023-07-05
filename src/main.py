@@ -73,9 +73,11 @@ if __name__ == "__main__":
     os.environ["DATASETS"] = os.path.join(args.dataset_dir, "data")
 
     f = open("wandb_key.txt", "r")
-    wandb_key = f.read() # "fbe8977ced9962ba4c826b6e012e35dad2c3f044"
+    wandb_key = f.read()
+    f = open("wandb_entity.txt", "r")
+    wandb_entity = f.read()
     wandb.login(key=wandb_key)
-    run = wandb.init(project=args.wandb_project, config=args, dir=os.environ["RESULTS"])
+    run = wandb.init(project=args.wandb_project, entity=wandb_entity, config=args, dir=os.environ["RESULTS"])
 
     if args.method == "gd":
         main_gd(dataset=args.dataset, arch_id=args.arch_id, loss=args.loss, opt=args.opt, lr=args.lr, max_steps=args.max_steps,

@@ -22,6 +22,10 @@ To run the code, you need to set two environment variables:
 
 Let's walk through how to use `gd.py` and `flow.py`.
 
+### Example nohup + wandb + plots
+nohup python src/main.py cifar10-5k-1k vgg11 mse --lr 0.1 --max_steps 3000 --neigs 2 --eig_freq 10 --wandb_project sharpness > outputs/output.sh &
+nohup python src/main.py cifar10-5k-1k resnet32 ce --lr 0.01 --max_steps 3000 --neigs 2 --eig_freq 10 --wandb_project sharpness > outputs/output.sh &
+
 #### Gradient descent
 
 The script `gd.py` trains a neural network using gradient descent.
@@ -34,6 +38,7 @@ gd.py [dataset] [arch_id] [loss] [lr] [max_steps]
 For example:
 ```
 python src/gd.py cifar10-5k fc-tanh  mse  0.01 100000 --acc_goal 0.99 --neigs 2  --eig_freq 100
+python src/gd.py cifar10-5k-1k vgg11 ce 0.01 10000 --neigs 2 --eig_freq 100
 ```
 The above command will train a fully-connected tanh network (`fc-tanh`) on a 5k subset of CIFAR-10 (`cifar10-5k`) using the square loss (`mse`).
 We will run vanila gradient descent with step size 0.01 (`lr`).

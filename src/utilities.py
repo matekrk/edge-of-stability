@@ -11,6 +11,8 @@ from torch.optim.optimizer import Optimizer
 from torch.utils.data import Dataset, DataLoader
 import os
 
+from relative_space import relative_projection, transform_space
+
 # the default value for "physical batch size", which is the largest batch size that we try to put on the GPU
 DEFAULT_PHYS_BS = 1000
 
@@ -18,7 +20,7 @@ DEFAULT_PHYS_BS = 1000
 def get_gd_directory(dataset: str, lr: float, arch_id: str, seed: int, opt: str, loss: str, beta: float = None):
     """Return the directory in which the results should be saved."""
     results_dir = os.environ["RESULTS"]
-    directory = f"{results_dir}/{dataset}/{arch_id}/seed_{seed}/{loss}/{opt}/"
+    directory = f"{results_dir}/{dataset}/{arch_id}/seed_{seed}/{loss}/{opt}"
     if opt == "gd":
         return f"{directory}/lr_{lr}"
     elif opt == "polyak" or opt == "nesterov":
@@ -45,6 +47,9 @@ def get_gd_optimizer(parameters, opt: str, lr: float, momentum: float) -> Optimi
     elif opt == "nesterov":
         return SGD(parameters, lr=lr, momentum=momentum, nesterov=True)
 
+def save_features(features, step, traj_directory):
+    torch.save(features, f"{traj_directory}/features_{step}.pt")
+
 
 def save_files(directory: str, arrays: List[Tuple[str, torch.Tensor]]):
     """Save a bunch of tensors."""
@@ -66,17 +71,44 @@ def iterate_dataset(dataset: Dataset, batch_size: int):
 
 
 def compute_losses(network: nn.Module, loss_functions: List[nn.Module], dataset: Dataset,
-                   batch_size: int = DEFAULT_PHYS_BS):
+                   batch_size: int = DEFAULT_PHYS_BS, return_features=False):
     """Compute loss over a dataset."""
     L = len(loss_functions)
     losses = [0. for l in range(L)]
+    to_return = []
     with torch.no_grad():
         for (X, y) in iterate_dataset(dataset, batch_size):
-            preds = network(X)
+            if return_features:
+                preds, features = network(X, return_features=return_features)
+                to_return.append(features)
+            else:
+                preds = network(X)
             for l, loss_fn in enumerate(loss_functions):
                 losses[l] += loss_fn(preds, y) / len(dataset)
+    if return_features:
+        return losses, torch.cat(to_return)
     return losses
 
+def compute_space(network: nn.Module, dataset: Dataset, batch_size: int = DEFAULT_PHYS_BS):
+    all_features = []
+    all_y = []
+    with torch.no_grad():
+        for (X, y) in iterate_dataset(dataset, batch_size):
+            preds, features = network(X, return_features=True)
+            features_transformed = transform_space(features)
+            all_features.append(features.view(-1, 512))
+            if len(y.shape) > 1:
+                all_y.append(torch.flatten(torch.argmax(y, dim=1))) # IndexError: Dimension out of range (expected to be in range of [-1, 0], but got 1) for CE
+            else:
+                all_y.append(y)
+            #torch.cat((all_features, features_transformed), 0)
+            #torch.cat((all_y, y), 0)
+    all_features = torch.stack(all_features)
+    all_y = torch.stack(all_y)
+    return all_features, all_y
+
+def calculate_trajectory_point(features, num_concat=50):
+    relevant_features = features[num_concat].reshape(num_concat, -1).flatten()
 
 def get_loss_and_acc(loss: str):
     """Return modules to compute the loss and accuracy.  The loss module should be "sum" reduction. """

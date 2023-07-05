@@ -19,14 +19,16 @@ class VGG(nn.Module):
     def __init__(self, features):
         super(VGG, self).__init__()
         self.features = features
-        self.classifier = nn.Sequential(
+        self.representation_dim = 512
+        self.encoder = nn.Sequential(
             nn.Dropout(),
-            nn.Linear(512, 512),
+            nn.Linear(self.representation_dim, self.representation_dim),
             nn.ReLU(True),
-            nn.Dropout(),
-            nn.Linear(512, 512),
+            nn.Linear(self.representation_dim, self.representation_dim),
             nn.ReLU(True),
-            nn.Linear(512, 10),
+        )
+        self.classi = nn.Sequential(
+            nn.Linear(self.representation_dim, 10),
         )
          # Initialize weights
         for m in self.modules():
@@ -36,11 +38,18 @@ class VGG(nn.Module):
                 m.bias.data.zero_()
 
 
-    def forward(self, x):
+    def forward(self, x, return_features=False):
         x = self.features(x)
         x = x.view(x.size(0), -1)
-        x = self.classifier(x)
+        f = self.encoder(x)
+        x = self.classi(f)
+        # x = self.classifier(x)
+        if return_features:
+            return x, f
         return x
+
+    def get_representation_dim(self):
+        return self.representation_dim
 
 class VGGNoDropout(nn.Module):
     '''
@@ -49,12 +58,15 @@ class VGGNoDropout(nn.Module):
     def __init__(self, features):
         super(VGGNoDropout, self).__init__()
         self.features = features
-        self.classifier = nn.Sequential(
-            nn.Linear(512, 512),
+        self.representation_dim = 512
+        self.encoder = nn.Sequential(
+            nn.Linear(self.representation_dim, self.representation_dim),
             nn.ReLU(True),
-            nn.Linear(512, 512),
+            nn.Linear(self.representation_dim, self.representation_dim),
             nn.ReLU(True),
-            nn.Linear(512, 10),
+        )
+        self.classi = nn.Sequential(
+            nn.Linear(self.representation_dim, 10),
         )
          # Initialize weights
         for m in self.modules():
@@ -64,12 +76,17 @@ class VGGNoDropout(nn.Module):
                 m.bias.data.zero_()
 
 
-    def forward(self, x):
+    def forward(self, x, return_features = False):
         x = self.features(x)
         x = x.view(x.size(0), -1)
-        x = self.classifier(x)
+        f = self.encoder(x)
+        x = self.classi(f)
+        if return_features:
+            return x, f
         return x
 
+    def get_representation_dim(self):
+        return self.representation_dim
 
 
 def make_layers(cfg, batch_norm=False):

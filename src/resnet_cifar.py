@@ -58,7 +58,8 @@ class ResNet(nn.Module):
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(64, num_classes)
+        self.representation_dim = 64
+        self.fc = nn.Linear(self.representation_dim, num_classes)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -90,7 +91,7 @@ class ResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, x, return_features=False):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -100,10 +101,14 @@ class ResNet(nn.Module):
         x = self.layer3(x)
 
         x = self.avgpool(x)
-        x = x.view(x.size(0), -1)
-        x = self.fc(x)
-
+        f = x.view(x.size(0), -1)
+        x = self.fc(f)
+        if return_features:
+            return x, f
         return x
+
+    def get_representation_dim(self):
+        return self.representation_dim
 
 
 def resnet20(**kwargs):

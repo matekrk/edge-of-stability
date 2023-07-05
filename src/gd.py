@@ -1,23 +1,30 @@
-from os import makedirs
-
+from os import makedirs, path
+import wandb
 import torch
 from torch.nn.utils import parameters_to_vector
 
 import argparse
 
 from archs import load_architecture
-from utilities import get_gd_optimizer, get_gd_directory, get_loss_and_acc, compute_losses, \
-    save_files, save_files_final, get_hessian_eigenvalues, iterate_dataset
+from utilities import get_gd_optimizer, get_gd_directory, get_loss_and_acc, compute_losses, save_features, \
+    save_files, save_files_final, get_hessian_eigenvalues, iterate_dataset, compute_space, calculate_trajectory_point
+from relative_space import transform_space
+from plot import plot_pca_space, plot_proj_traj
 from data import load_dataset, take_first, DATASETS
 
 
 def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: int, neigs: int = 0,
          physical_batch_size: int = 1000, eig_freq: int = -1, iterate_freq: int = -1, save_freq: int = -1,
          save_model: bool = False, beta: float = 0.0, nproj: int = 0,
-         loss_goal: float = None, acc_goal: float = None, abridged_size: int = 5000, seed: int = 0):
+         loss_goal: float = None, acc_goal: float = None, abridged_size: int = 5000, seed: int = 0,
+         trajectories: bool = False, trajectories_first: int = -1):
     directory = get_gd_directory(dataset, lr, arch_id, seed, opt, loss, beta)
     print(f"output directory: {directory}")
     makedirs(directory, exist_ok=True)
+    if trajectories:
+        traj_directory = path.join(directory, "traj")
+        makedirs(traj_directory, exist_ok=True)
+        assert trajectories_first > 0
 
     train_dataset, test_dataset = load_dataset(dataset, loss)
     abridged_train = take_first(train_dataset, abridged_size)
@@ -32,20 +39,41 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
 
     optimizer = get_gd_optimizer(network.parameters(), opt, lr, beta)
 
+    exploding = -1
+
     train_loss, test_loss, train_acc, test_acc = \
         torch.zeros(max_steps), torch.zeros(max_steps), torch.zeros(max_steps), torch.zeros(max_steps)
     iterates = torch.zeros(max_steps // iterate_freq if iterate_freq > 0 else 0, len(projectors))
     eigs = torch.zeros(max_steps // eig_freq if eig_freq >= 0 else 0, neigs)
 
+    wandb.define_metric("train/step")
+    wandb.define_metric("train/*", step_metric="train/step")
+    wandb.define_metric("test/*", step_metric="test/step")
+
+    if trajectories:
+        dim_feature = network.get_representation_dim()
+        trajectories_full = torch.zeros((trajectories_first//eig_freq, 1000, dim_feature))
+        y_loss = torch.zeros(trajectories_first//eig_freq)
+    #perm = torch.randperm(1000)
+    #ind_anchors = perm[:num_anchors]
+
     for step in range(0, max_steps):
         train_loss[step], train_acc[step] = compute_losses(network, [loss_fn, acc_fn], train_dataset,
                                                            physical_batch_size)
-        test_loss[step], test_acc[step] = compute_losses(network, [loss_fn, acc_fn], test_dataset, physical_batch_size)
+        (test_loss[step], test_acc[step]), features = compute_losses(network, [loss_fn, acc_fn], test_dataset, physical_batch_size, return_features=True)
+        wandb.log({'train/step': step, 'train/acc': train_acc[step], 'train/loss': train_loss[step]})
+        wandb.log({'test/step': step, 'test/acc': test_acc[step], 'test/loss': test_loss[step]})
 
         if eig_freq != -1 and step % eig_freq == 0:
+            if trajectories and step < trajectories_first:
+                
+                save_features(features, step, traj_directory)
+                trajectories_full[step//eig_freq] = features
+                y_loss[step//eig_freq] = test_loss[step]
+            
             eigs[step // eig_freq, :] = get_hessian_eigenvalues(network, loss_fn, abridged_train, neigs=neigs,
                                                                 physical_batch_size=physical_batch_size)
-            print("eigenvalues: ", eigs[step//eig_freq, :])
+            wandb.log({'train/step': step, 'train/e1': eigs[step // eig_freq, 0], 'train/e2': eigs[step // eig_freq, 1]})
 
         if iterate_freq != -1 and step % iterate_freq == 0:
             iterates[step // iterate_freq, :] = projectors.mv(parameters_to_vector(network.parameters()).cpu().detach())
@@ -60,6 +88,14 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
         if (loss_goal != None and train_loss[step] < loss_goal) or (acc_goal != None and train_acc[step] > acc_goal):
             break
 
+        if exploding > -1 or (step > 3 and train_loss[step] > 2 * train_loss[step-1]):
+            print("exploding")
+            save_features(features, step, traj_directory)
+            exploding = step
+            if train_loss[step] > 5 * train_loss[step-4]:
+                print("stabilized")
+                exploding = -1
+
         optimizer.zero_grad()
         for (X, y) in iterate_dataset(train_dataset, physical_batch_size):
             loss = loss_fn(network(X.cuda()), y.cuda()) / len(train_dataset)
@@ -72,6 +108,10 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
                       ("train_acc", train_acc[:step + 1]), ("test_acc", test_acc[:step + 1])])
     if save_model:
         torch.save(network.state_dict(), f"{directory}/snapshot_final")
+
+    if trajectories:
+        torch.save(trajectories_full, path.join(traj_directory, "all.pt"))
+        torch.save(y_loss, path.join(traj_directory, "losses.pt"))
 
 
 if __name__ == "__main__":

@@ -7,8 +7,6 @@ import torch
 from torch import Tensor
 import torch.nn.functional as F
 
-DATASETS_FOLDER = os.environ["DATASETS"]
-
 def center(X_train: np.ndarray, X_test: np.ndarray):
     mean = X_train.mean(0)
     return X_train - mean, X_test - mean
@@ -35,7 +33,10 @@ def make_labels(y, loss):
         return _one_hot(y, 10, 0)
 
 
-def load_cifar(loss: str) -> (TensorDataset, TensorDataset):
+def load_cifar(loss: str, datasets_folder=None) -> (TensorDataset, TensorDataset):
+    if datasets_folder is None:
+        DATASETS_FOLDER = os.environ["DATASETS"]
+
     cifar10_train = CIFAR10(root=DATASETS_FOLDER, download=True, train=True)
     cifar10_test = CIFAR10(root=DATASETS_FOLDER, download=True, train=False)
     X_train, X_test = flatten(cifar10_train.data / 255), flatten(cifar10_test.data / 255)

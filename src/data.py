@@ -7,7 +7,7 @@ from synthetic import make_chebyshev_dataset, make_linear_dataset
 # from wikitext import load_wikitext_2
 
 DATASETS = [
-    "cifar10", "cifar10-1k", "cifar10-2k", "cifar10-5k", "cifar10-10k", "cifar10-20k", "chebyshev-3-20",
+    "cifar10", "cifar10-1k", "cifar10-2k", "cifar10-5k", "cifar10-5k-1k", "cifar10-10k", "cifar10-20k", "chebyshev-3-20",
     "chebyshev-4-20", "chebyshev-5-20", "linear-50-50"
 ]
 
@@ -61,6 +61,9 @@ def load_dataset(dataset_name: str, loss: str) -> (TensorDataset, TensorDataset)
     elif dataset_name == "cifar10-5k":
         train, test = load_cifar(loss)
         return take_first(train, 5000), test
+    elif dataset_name == "cifar10-5k-1k":
+        train, test = load_cifar(loss)
+        return take_first(train, 5000), take_first(test, 1000)
     elif dataset_name == "cifar10-10k":
         train, test = load_cifar(loss)
         return take_first(train, 10000), test

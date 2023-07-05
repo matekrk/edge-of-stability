@@ -1,4 +1,6 @@
+wandb
 outputs
+src/__pycache__
 batch
 notebooks
 upload.sh

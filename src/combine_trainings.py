@@ -12,7 +12,7 @@ import torch
 
 from relative_space import transform_space
 
-NUM_METHODS = 6 # 3 # 10
+NUM_METHODS = 2 # 4 # 6 # 3 # 10
 STEPS = 50
 
 take_first = 100
@@ -46,7 +46,8 @@ my_markers = ["D", "<", "v", "^", ">", "o", "s", "*", "X", "P"]
 my_shorter_markers = ["D", "o", "X"]
 #assert len(my_shorter_markers) == NUM_METHODS
 my_medium_markers = ["v", "^", ">", "o", "*", "P"]
-assert len(my_medium_markers) == NUM_METHODS
+#assert len(my_medium_markers) == NUM_METHODS
+my_super_shorter_markers = ["x", "o"]
 
 feat_p_ce_0001 = torch.load(os.path.join(p_ce_0001, "all.pt"))
 feat_p_ce_001_0 = torch.load(os.path.join(p_ce_001_0, "all.pt"))

@@ -23,8 +23,9 @@ To run the code, you need to set two environment variables:
 Let's walk through how to use `gd.py` and `flow.py`.
 
 ### Example nohup + wandb + plots
-nohup python src/main.py cifar10-5k-1k vgg11 mse --lr 0.1 --max_steps 3000 --neigs 2 --eig_freq 10 --wandb_project sharpness > outputs/output.sh &
-nohup python src/main.py cifar10-5k-1k resnet32 ce --lr 0.01 --max_steps 3000 --neigs 2 --eig_freq 10 --wandb_project sharpness > outputs/output.sh &
+nohup python src/main.py gd cifar10-5k-1k vgg11 mse --lr 0.1 --max_steps 3000 --neigs 2 --eig_freq 10 --wandb_project sharpness > outputs/output.sh &
+nohup python src/main.py gd cifar10-5k-1k resnet32 ce --lr 0.01 --max_steps 3000 --neigs 2 --eig_freq 10 --wandb_project sharpness > outputs/output.sh &
+nohup python src/main.py flow cifar10-5k-1k vgg11 mse --tick 1 --max_time 1000 --neigs 2  --eig_freq 1 --wandb_project sharpness > outputs/output.sh &
 
 #### Gradient descent
 

@@ -1,16 +1,17 @@
-from os import makedirs
+from os import makedirs, path
 
-from data import DATASETS
+import wandb
 import torch
 import torch.nn as nn
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from torch.utils.data import Dataset
+
 import argparse
 
 from archs import load_architecture
-from utilities import get_flow_directory, get_loss_and_acc, compute_losses, \
+from utilities import get_flow_directory, get_loss_and_acc, compute_losses, save_features, \
     save_files, save_files_final, AtParams, compute_gradient, get_hessian_eigenvalues, DEFAULT_PHYS_BS
-from data import load_dataset, take_first
+from data import DATASETS, load_dataset, take_first
 
 
 def rk_step(network: nn.Module, loss_fn: nn.Module, dataset: Dataset, step_size: float,
@@ -45,10 +46,15 @@ def rk_advance_time(network: nn.Module, loss_fn: nn.Module, dataset: Dataset, T:
 
 def main(dataset: str, arch_id: str, loss: str, max_time: float, tick: float, neigs=0, physical_batch_size=1000,
          abridged_size: int = 5000, eig_freq: int = -1, iterate_freq: int = -1, save_freq: int = -1, alpha: float = 1.0,
-         nproj: int = 0, loss_goal: float = None, acc_goal: float = None, max_step_size: int = 999, seed: int = 0):
+         nproj: int = 0, loss_goal: float = None, acc_goal: float = None, max_step_size: int = 999, seed: int = 0, 
+         trajectories: bool = False, trajectories_first: int = -1):
     directory = get_flow_directory(dataset, arch_id, seed, loss, tick)
     print(f"output directory: {directory}")
     makedirs(directory, exist_ok=True)
+    if trajectories:
+        traj_directory = path.join(directory, "traj")
+        makedirs(traj_directory, exist_ok=True)
+        assert trajectories_first > 0
 
     train_dataset, test_dataset = load_dataset(dataset, loss)
     abridged_train = take_first(train_dataset, abridged_size)
@@ -63,11 +69,21 @@ def main(dataset: str, arch_id: str, loss: str, max_time: float, tick: float, ne
     torch.manual_seed(7)
     projectors = torch.randn(nproj, len(parameters_to_vector(network.parameters())))
 
+    exploding = -1
+
     times, train_loss, test_loss, train_acc, test_acc = \
         torch.zeros(max_steps), torch.zeros(max_steps), torch.zeros(max_steps), \
         torch.zeros(max_steps), torch.zeros(max_steps)
     iterates = torch.zeros(max_steps // iterate_freq if iterate_freq > 0 else 0, len(projectors))
     eigs = torch.zeros(max_steps // eig_freq if eig_freq >= 0 else 0, neigs)
+
+    wandb.define_metric("train/step")
+    wandb.define_metric("train/*", step_metric="train/step")
+    wandb.define_metric("test/*", step_metric="test/step")
+    if trajectories:
+        dim_feature = network.get_representation_dim()
+        trajectories_full = torch.zeros((trajectories_first//eig_freq, 1000, dim_feature))
+        y_loss = torch.zeros(trajectories_first//eig_freq)
 
     sharpness = float('inf')
 
@@ -75,13 +91,22 @@ def main(dataset: str, arch_id: str, loss: str, max_time: float, tick: float, ne
         times[step] = step * tick
         train_loss[step], train_acc[step] = compute_losses(network, [loss_fn, acc_fn], train_dataset,
                                                            physical_batch_size)
-        test_loss[step], test_acc[step] = compute_losses(network, [loss_fn, acc_fn], test_dataset, physical_batch_size)
+        (test_loss[step], test_acc[step]), features = compute_losses(network, [loss_fn, acc_fn], test_dataset, 
+                                                            physical_batch_size, return_features=True)
 
         if eig_freq != -1 and step % eig_freq == 0:
+            if trajectories and step < trajectories_first:
+                
+                save_features(features, step, traj_directory)
+                trajectories_full[step//eig_freq] = features
+                y_loss[step//eig_freq] = test_loss[step]
+
             eigs[step // eig_freq, :] = get_hessian_eigenvalues(network, loss_fn, abridged_train, neigs=neigs,
                                                                 physical_batch_size=physical_batch_size)
             sharpness = eigs[step // eig_freq, 0]
             print(f"sharpness = {sharpness}", flush=True)
+
+            wandb.log({'train/step': step, 'train/e1': eigs[step // eig_freq, 0], 'train/sharpness': eigs[step // eig_freq, 0]})
 
         if iterate_freq != -1 and step % iterate_freq == 0:
             iterates[step // iterate_freq, :] = projectors.mv(parameters_to_vector(network.parameters()).cpu().detach())
@@ -96,8 +121,19 @@ def main(dataset: str, arch_id: str, loss: str, max_time: float, tick: float, ne
                 (acc_goal is not None and train_acc[step] > acc_goal):
             break
 
+        if exploding > -1 or (step > 3 and train_loss[step] > 2 * train_loss[step-1]):
+            print("exploding")
+            save_features(features, step, traj_directory)
+            exploding = step
+            if train_loss[step] > 5 * train_loss[step-4]:
+                print("stabilized")
+                exploding = -1
+
         print(f"{times[step]:.3f}\t{train_loss[step]:.3f}\t{train_acc[step]:.3f}"
               f"\t{test_loss[step]:.3f}\t{test_acc[step]:.3f}", flush=True)
+        
+        wandb.log({'train/step': step, 'train/acc': train_acc[step], 'train/loss': train_loss[step], 'train/time': times[step]})
+        wandb.log({'test/step': step, 'test/acc': test_acc[step], 'test/loss': test_loss[step], 'test/time': times[step]})
 
         if (loss_goal != None and train_loss[step] < loss_goal) or (acc_goal != None and train_acc[step] > acc_goal):
             break
@@ -110,6 +146,10 @@ def main(dataset: str, arch_id: str, loss: str, max_time: float, tick: float, ne
                                  ("train_loss", train_loss[:step + 1]),
                                  ("test_loss", test_loss[:step + 1]), ("train_acc", train_acc[:step + 1]),
                                  ("test_acc", test_acc[:step + 1])])
+    
+    if trajectories:
+        torch.save(trajectories_full, path.join(traj_directory, "all.pt"))
+        torch.save(y_loss, path.join(traj_directory, "losses.pt"))
 
 
 if __name__ == "__main__":

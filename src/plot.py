@@ -48,7 +48,8 @@ def plot_proj_traj(trajectory, y_loss, directory, take_first=50, save=True):
 
     print(trajectory.shape, y_loss.shape)
 
-    DIMS = (take_first, 512)
+    feat_dim = trajectory[0].shape[1]
+    DIMS = (take_first, feat_dim)
     assert len(trajectory) == len(y_loss)
     for el in trajectory:
         assert el.shape == (1000, DIMS[1])

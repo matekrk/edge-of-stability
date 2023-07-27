@@ -39,8 +39,6 @@ if __name__ == "__main__":
     parser.add_argument("--wandb_project", type=str, default="", help="If '' then no wandb log. Entity from wandb_key.txt")
     parser.add_argument("--result_dir", type=str, default=os.path.abspath(os.path.join(os.getcwd(), os.pardir)))
     parser.add_argument("--dataset_dir", type=str, default=os.path.abspath(os.path.join(os.getcwd(), os.pardir)))
-    
-    #parser.add_argument("--method", choices=["gd", "flow"], help="which method to choose", required=True)
 
     # GD
     #parser.add_argument("--gd", type=bool, default=False, help="if 'true', gradient descent")

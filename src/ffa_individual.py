@@ -15,31 +15,54 @@ from torchvision.datasets import MNIST, CIFAR10
 from torchvision.transforms import Compose, ToTensor, Normalize, Lambda, Resize, RandomCrop
 from torch.utils.data.sampler import SubsetRandomSampler
 
+import wandb
+
 DEFAULT_PHYS_BS = 1000
-RATIO = 5000 // DEFAULT_PHYS_BS
+RATIO = 50000 // DEFAULT_PHYS_BS
 ABRIDGED_SIZE = 5000
 DATASETS_FOLDER = "/home/mateusz.pyla/stan/data"
+# DATASETS_FOLDER = "/home/mateuszpyla/Pulpit/phd/stan"
+DEVICE="cuda"
+# DEVICE="cpu"
 
 ## UTILS
 
-def overlay_y_on_x_rgb(x, y):
+def overlay_y_on_x_rgb(x, labels):
     """Replace the first 10 pixels of data [x] with one-hot-encoded label [y]
     """
+    num_classes=max(labels)+1
     x_ = x.clone()
-    x_[:, :, 0, :10] *= 0.0
-    #x_[range(x.shape[0]), :, 0, y.long()] = x.max()
-    for i in range(x.shape[0]):
-        x_[i, :, 0, y[i].long()] = x.max()
+    x_[:, :, 0, :num_classes] *= 0.0
+    x_[range(x.shape[0]), :, 0, labels.long()] = x.max()
     return x_
 
-def overlay_y_on_x(x, y):
-    """Replace the first 10 pixels of data (RGB) [x] with one-hot-encoded label [y]
+def overlay_y_on_x(x, labels):
+    """Replace the first 10 pixels of data [x] with one-hot-encoded label [y]
     """
+    num_classes=max(labels)+1
     x_ = x.clone()
-    x_[:, :10] *= 0.0
-    for i in range(x.shape[0]):
-        x_[i, y[i].long()] = x.max()
-    #x_[range(x.shape[0]), y.long()] = x.max()
+    x_[:, :num_classes] *= 0.0
+    x_[range(x.shape[0]), labels.long()] = x.max()
+    return x_
+
+def overlay_onehot_y_on_x_rgb(x, y):
+    """Replace the first 10 pixels of data [x] with one-hot-encoded label [y]
+    """
+    labels = _from_one_hot(y)
+    num_classes=y.shape[1]
+    x_ = x.clone()
+    x_[:, :, 0, :num_classes] *= 0.0
+    x_[range(x.shape[0]), :, 0, labels.long()] = x.max()
+    return x_
+
+def overlay_onehot_y_on_x(x, y):
+    """Replace the first 10 pixels of data [x] with one-hot-encoded label [y]
+    """
+    labels = _from_one_hot(y)
+    num_classes=y.shape[1]
+    x_ = x.clone()
+    x_[:, :num_classes] *= 0.0
+    x_[range(x.shape[0]), labels.long()] = x.max()
     return x_
 
 class SquaredLoss(nn.Module):
@@ -93,6 +116,16 @@ def get_loss_and_acc(loss: str, threshold: Optional[int]=None):
         return SimpleLoss(threshold), SimpleAccuracy()
     raise NotImplementedError(f"no such loss function: {loss}")
 
+def simple_goodness(h):
+    return h.pow(2).mean(1)
+
+def calculate_goodness_acc(g_pos, g_neg, threshold):
+        # positive above threshold
+        pos_acc = torch.count_nonzero(torch.greater_equal(g_pos, threshold)) / len(g_pos)
+        # negative below threshold
+        neg_acc = torch.count_nonzero(torch.less_equal(g_neg, threshold)) / len(g_neg)
+        return pos_acc, neg_acc
+
 # SHARP
 
 def compute_hvp(network: nn.Module, loss_fn: nn.Module,
@@ -101,10 +134,10 @@ def compute_hvp(network: nn.Module, loss_fn: nn.Module,
     p = len(nn.utils.parameters_to_vector(network.parameters()))
     n = len(dataset)
     hvp = torch.zeros(p, dtype=torch.float, device='cuda')
-    vector = vector.cuda()
+    vector = vector.to(DEVICE)
 
     for (X_pos, X_neg, y) in iterate_dataset_posneg(dataset, physical_batch_size):
-        X_pos, X_neg, y = X_pos.cuda(), X_neg.cuda(), y.cuda()
+        X_pos, X_neg, y = X_pos.to(DEVICE), X_neg.to(DEVICE), y.to(DEVICE)
         g_pos = network.forward(X_pos).pow(2).mean(1)
         g_neg = network.forward(X_neg).pow(2).mean(1)
         loss = loss_fn(g_pos, g_neg)
@@ -119,7 +152,7 @@ def lanczos(matrix_vector, dim: int, neigs: int):
     (which we can access via matrix-vector products). """
 
     def mv(vec: np.ndarray):
-        gpu_vec = torch.tensor(vec, dtype=torch.float).cuda()
+        gpu_vec = torch.tensor(vec, dtype=torch.float).to(DEVICE)
         return matrix_vector(gpu_vec)
 
     operator = LinearOperator((dim, dim), matvec=mv)
@@ -174,6 +207,9 @@ def flatten(arr: np.ndarray):
 def unflatten(arr: np.ndarray, shape: Tuple):
     return arr.reshape(arr.shape[0], *shape)
 
+def _from_one_hot(one_hot: Tensor):
+    return torch.argmax(one_hot, dim=1)
+
 def _one_hot(tensor: Tensor, num_classes: int, default=0):
     M = F.one_hot(tensor, num_classes)
     M[M == 0] = default
@@ -191,13 +227,13 @@ def iterate_dataset(dataset, batch_size: int):
     """Iterate through a dataset, yielding batches of data."""
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
     for (batch_X, batch_y) in loader:
-        yield batch_X.cuda(), batch_y.cuda()
+        yield batch_X.to(DEVICE), batch_y.to(DEVICE)
 
 def iterate_dataset_posneg(dataset, batch_size: int):
     """Iterate through a dataset, yielding batches of data with positives and negatives."""
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
     for (batch_X_pos, batch_X_neg, batch_y) in loader:
-        yield batch_X_pos.cuda(), batch_X_neg.cuda(), batch_y.cuda()
+        yield batch_X_pos.to(DEVICE), batch_X_neg.to(DEVICE), batch_y.to(DEVICE)
 
 def load_cifar_help(loss: str, datasets_folder=DATASETS_FOLDER) -> Tuple[TensorDataset, TensorDataset]:
 
@@ -208,16 +244,43 @@ def load_cifar_help(loss: str, datasets_folder=DATASETS_FOLDER) -> Tuple[TensorD
         make_labels(torch.tensor(cifar10_test.targets), loss)
     center_X_train, center_X_test = center(X_train, X_test)
     standardized_X_train, standardized_X_test = standardize(center_X_train, center_X_test)
-    train = TensorDataset(torch.from_numpy(standardized_X_train.astype(float)), y_train)
-    test = TensorDataset(torch.from_numpy(standardized_X_test.astype(float)), y_test)
-    #train = TensorDataset(torch.from_numpy(unflatten(standardized_X_train, (32, 32, 3)).transpose((0, 3, 1, 2))).float(), y_train)
-    #test = TensorDataset(torch.from_numpy(unflatten(standardized_X_test, (32, 32, 3)).transpose((0, 3, 1, 2))).float(), y_test)
+    train = TensorDataset(torch.from_numpy(standardized_X_train.astype(float)).float(), y_train)
+    test = TensorDataset(torch.from_numpy(standardized_X_test.astype(float)).float(), y_test)
+    train = TensorDataset(torch.from_numpy(unflatten(standardized_X_train, (32, 32, 3)).transpose((0, 3, 1, 2))).float(), y_train)
+    test = TensorDataset(torch.from_numpy(unflatten(standardized_X_test, (32, 32, 3)).transpose((0, 3, 1, 2))).float(), y_test)
     return train, test
+
+def load_mnist_help(loss: str, datasets_folder=DATASETS_FOLDER):
+
+    mnist_train = MNIST(root=datasets_folder, download=True, train=True)
+    mnist_test = MNIST(root=datasets_folder, download=True, train=False)
+    X_train, X_test = flatten(mnist_train.data / 255), flatten(mnist_test.data / 255)
+    y_train, y_test = make_labels(torch.tensor(mnist_train.targets), loss), \
+        make_labels(torch.tensor(mnist_test.targets), loss)
+    #center_X_train, center_X_test = center(X_train, X_test)
+    #standardized_X_train, standardized_X_test = standardize(center_X_train, center_X_test)
+    standardized_X_train, standardized_X_test = X_train, X_test
+    train = TensorDataset(standardized_X_train.float(), y_train)
+    test = TensorDataset(standardized_X_test.float(), y_test)
+    return train, test
+
 
 def load_dataset(dataset_name, loss):
     if dataset_name == "cifar10-5k-1k":
         train, test = load_cifar_help(loss)
         return take_first(train, 5000), take_first(test, 1000)
+    
+    if dataset_name == "cifar10-50k-1k":
+        train, test = load_cifar_help(loss)
+        return take_first(train, 50000), take_first(test, 1000)
+    
+    elif dataset_name == "mnist-5k-1k":
+        train, test = load_mnist_help(loss)
+        return take_first(train, 5000), take_first(test, 1000)
+    
+    elif dataset_name == "mnist-50k-1k":
+        train, test = load_mnist_help(loss)
+        return take_first(train, 50000), take_first(test, 1000)
 
 class CustomTensorDataset(Dataset):
     """TensorDataset with support of transforms.
@@ -265,7 +328,7 @@ class CustomTensorDatasetPosNeg(Dataset):
         return X_pos
     
     def get_negatives(self):
-        X_neg = self.tensors[0]
+        X_neg = self.tensors[1]
         if self.transform:
             X_neg = self.transform(X_neg)
         return X_neg
@@ -319,7 +382,7 @@ def old_CIFAR_loaders(train_batch_size=50000, test_batch_size=10000):
     #dataset_valid = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transforms_valid)
     dataset_test = CIFAR10(root='./data', train=False, download=True, transform=transform_test)
 
-    num_train = len(dataset_train)
+    #num_train = len(dataset_train)
     #indices = list(range(num_train))
     #split = int(np.floor(args.valid_size * num_train))
     #train_idx, valid_idx = indices[split:], indices[:split]
@@ -340,35 +403,41 @@ class Net(torch.nn.Module):
     def __init__(self, dims):
         super().__init__()
         self.layers = []
-        for d in range(len(dims) - 1):
-            self.layers += [Layer(dims[d], dims[d + 1]).cuda()]
-
+        for i, d in enumerate(range(len(dims) - 1)):
+            self.layers += [Layer(dims[d], dims[d + 1]).to(DEVICE)]
+            self.layers[-1].assign_order(i)
         self.threshold = 2
-
+        self.lr = 10
         self.num_epochs = len(self.layers) * [1]
 
-    def predict(self, x, numb_all_classes=10):
+    def predict(self, x, goodness_fn, overlay_fn, numb_all_classes=10):
         goodness_per_label = []
         for label in range(numb_all_classes):
             label_onehot = torch.zeros((len(x), numb_all_classes))
             label_onehot[:, label] = 1
-            h = overlay_y_on_x(x, label_onehot)
+            h = overlay_fn(x, label_onehot).reshape(len(x), -1)
             goodness = []
             for layer in self.layers:
                 h = layer(h)
-                goodness += [h.pow(2).mean(1)]
+                goodness += [goodness_fn(h)]
             goodness_per_label += [sum(goodness).unsqueeze(1)]
         goodness_per_label = torch.cat(goodness_per_label, 1)
         return goodness_per_label.argmax(1)
 
-    def train(self, dataset, loss, num_epochs=None, physical_batch_size=DEFAULT_PHYS_BS, abridged_size=ABRIDGED_SIZE, eos_every=-1):
+    def train(self, dataset, goodness_fn, overlay_fn, loss, threshold=None, lr=None, num_epochs=None, physical_batch_size=DEFAULT_PHYS_BS, abridged_size=ABRIDGED_SIZE, eos_every=-1):
+
+        if threshold is None:
+            threshold = self.threshold
+
+        if lr is None:
+            lr = self.lr
 
         if num_epochs is None:
             num_epochs = self.num_epochs
 
-        lst_losss, lst_sharp, lst_losss_test, lst_sharp_test = [], [], [], []
-
+        lst_losss_train, lst_losss_test = [], []
         lst_acc_train, lst_acc_test = [], []
+        lst_sharp = []
 
         train_dataset, test_dataset = load_dataset(dataset, loss)
         abridged_train = take_first(train_dataset, abridged_size)
@@ -376,60 +445,63 @@ class Net(torch.nn.Module):
         for j, (X, y) in enumerate(iterate_dataset(train_dataset, len(train_dataset))):
             assert j == 0 # one full batch #FIXME later
             y_train = y.detach()
-            X, y = X.cuda(), y.cuda()
-            X_pos = overlay_y_on_x(X, y)
+            X, y = X.to(DEVICE), y.to(DEVICE)
+            X_pos = overlay_fn(X, y).reshape(len(X), -1)
             rnd = torch.randperm(X.size(0))
-            X_neg = overlay_y_on_x(X, y[rnd])
+            X_neg = overlay_fn(X, y[rnd]).reshape(len(X), -1)
         current_dataset = CustomTensorDatasetPosNeg(X_pos, X_neg, y)
         
-        """
         for (X, y) in iterate_dataset(test_dataset, len(test_dataset)):
             y_test = y.detach()
-            X, y = X.cuda(), y.cuda()
-            X_pos = overlay_y_on_x(X, y)
+            X, y = X.to(DEVICE), y.to(DEVICE)
+            X_pos = overlay_fn(X, y).reshape(len(X), -1)
             rnd = torch.randperm(X.size(0))
-            X_neg = overlay_y_on_x(X, y[rnd])
-        current_test = CustomTensorDatasetPosNeg(X_pos, X_neg, y)
-        """
+            X_neg = overlay_fn(X, y[rnd]).reshape(len(X), -1)
+        current_test = CustomTensorDatasetPosNeg(X_pos, X_neg, y_test)
 
         for (X, y) in iterate_dataset(abridged_train, abridged_size):
             y_abridged = y.detach()
-            X, y = X.cuda(), y.cuda()
-            X_pos = overlay_y_on_x(X, y)
+            X, y = X.to(DEVICE), y.to(DEVICE)
+            X_pos = overlay_fn(X, y).reshape(len(X), -1)
             rnd = torch.randperm(X.size(0))
-            X_neg = overlay_y_on_x(X, y[rnd])
+            X_neg = overlay_fn(X, y[rnd]).reshape(len(X), -1)
         current_abridged = CustomTensorDatasetPosNeg(X_pos, X_neg, y)
 
-        acc_train = self.eval(abridged_train, loss, physical_batch_size=len(abridged_train))
-        acc_test = self.eval(test_dataset, loss, physical_batch_size=len(test_dataset))
+        acc_train = self.eval(abridged_train, goodness_fn, overlay_fn, loss, threshold, physical_batch_size=len(abridged_train))
+        acc_test = self.eval(test_dataset, goodness_fn, overlay_fn, loss, threshold, physical_batch_size=len(test_dataset))
 
         for i, layer in enumerate(self.layers):
             print('training layer', i, '...')
-            loss_val, sharp_val = layer.train(current_dataset, current_abridged, loss, physical_batch_size=physical_batch_size, num_epochs=num_epochs[i], test=test_dataset, eos_every=eos_every)
+            train_loss, train_acc, test_loss, test_acc, sharp_val = layer.train_me(current_dataset, current_abridged, goodness_fn, loss, threshold, optimizer="sgd", lr=lr, physical_batch_size=physical_batch_size, num_epochs=num_epochs[i], current_test=current_test, eos_every=eos_every)
             
-            acc_train = self.eval(abridged_train, loss, physical_batch_size=len(abridged_train))
-            acc_test = self.eval(test_dataset, loss, physical_batch_size=len(test_dataset))
+            acc_train = self.eval(abridged_train, goodness_fn, overlay_fn, loss, threshold, physical_batch_size=len(abridged_train))
+            acc_test = self.eval(test_dataset, goodness_fn, overlay_fn, loss, threshold, physical_batch_size=len(test_dataset))
 
-            lst_losss.append(loss_val.detach().numpy())
+            print('trained layer,', i, '...', '|train acc|', acc_train.item(), '|test acc|', acc_test.item())
+
+            lst_losss_train.append(train_loss.detach().numpy())
+            lst_acc_train.append(train_acc.detach().numpy())
+            lst_losss_test.append(test_loss.detach().numpy())
+            lst_acc_test.append(test_acc.detach().numpy())
             lst_sharp.append(sharp_val.detach().numpy())
-            lst_acc_train.append(acc_train.item())
-            lst_acc_test.append(acc_test.item())
 
             with torch.no_grad():
                 current_dataset = CustomTensorDatasetPosNeg(layer.forward(current_dataset.get_positives()), layer.forward(current_dataset.get_negatives()), y_train)
-                # current_test_dataset = CustomTensorDatasetPosNeg(layer.forward(current_test.get_positives()), layer.forward(current_test.get_negatives()), y_test)
+                current_test = CustomTensorDatasetPosNeg(layer.forward(current_test.get_positives()), layer.forward(current_test.get_negatives()), y_test)
                 current_abridged = CustomTensorDatasetPosNeg(layer.forward(current_abridged.get_positives()), layer.forward(current_abridged.get_negatives()), y_abridged)
 
-        # return lst_h_pos, lst_h_neg, lst_losss, lst_sharp
-        return lst_losss, lst_sharp, lst_acc_train, lst_acc_test
+        return lst_losss_train, lst_losss_test, lst_acc_train, lst_acc_test, lst_sharp
     
     @torch.no_grad()
-    def eval(self, dataset, loss, physical_batch_size=DEFAULT_PHYS_BS):
+    def eval(self, dataset, goodness_fn, overlay_fn, loss, threshold=None, physical_batch_size=DEFAULT_PHYS_BS):
 
-        loss_fn, acc_fn = get_loss_and_acc(loss, threshold=self.threshold)
+        if threshold is None:
+            threshold = self.threshold
+
+        loss_fn, acc_fn = get_loss_and_acc(loss, threshold)
 
         for j, (X, y) in enumerate(tqdm(iterate_dataset(dataset, len(dataset)))):
-            y_hat = self.predict(X)
+            y_hat = self.predict(X, goodness_fn, overlay_fn)
             acc = acc_fn(y.argmax(1), y_hat)
 
         return acc
@@ -441,75 +513,168 @@ class Layer(nn.Linear):
                  bias=True, device=None, dtype=None):
         super().__init__(in_features, out_features, bias, device, dtype)
         self.relu = torch.nn.ReLU()
-        self.opt = SGD(self.parameters(), lr=0.3) # Adam(self.parameters(), lr=0.03)
-        self.threshold = 2.0
+        self.threshold = 2
+        self.lr = 10
         self.num_epochs = 1000
 
+    def assign_order(self, num):
+        self.num = num
+
     def forward(self, x):
+        return self.relu(F.linear(x, self.weight, self.bias))
         x_direction = x / (x.norm(2, 1, keepdim=True) + 1e-4)
         return self.relu(
-            torch.mm(x_direction, self.weight.T.double()) +
+            torch.mm(x_direction, self.weight.T) +
             self.bias.unsqueeze(0))
 
-    def train(self, current_posneg, current_posneg_abridged, loss, physical_batch_size=DEFAULT_PHYS_BS, num_epochs=None, test=None, eos_every=-1):
+    def train_me(self, current_posneg, current_posneg_abridged, goodness_fn, loss, threshold, optimizer="sgd", lr=None, num_epochs=None, physical_batch_size=DEFAULT_PHYS_BS, current_test=None, eos_every=-1):
+
+        if threshold is None:
+            threshold = self.threshold
+
+        if lr is None:
+            lr = self.lr
 
         if num_epochs is None:
             num_epochs = self.num_epochs
 
+        if optimizer == "sgd":
+            self.opt = SGD(self.parameters(), lr=lr)
+        elif optimizer == "adam":
+            self.opt = Adam(self.parameters(), lr=lr)
+
         if eos_every != -1:
-            self.sharpness = torch.zeros(RATIO * num_epochs // eos_every)
+            self.sharpness = torch.zeros(num_epochs // eos_every)
         else:
-            self.sharpness = torch.zeros(RATIO * num_epochs)
+            self.sharpness = torch.zeros(num_epochs)
         self.train_loss = torch.zeros(RATIO * num_epochs)
         self.train_acc = torch.zeros(RATIO * num_epochs)
         self.test_loss = torch.zeros(RATIO * num_epochs)
         self.test_acc = torch.zeros(RATIO * num_epochs)
 
-        loss_fn, acc_fn = get_loss_and_acc(loss, threshold=self.threshold)
+        loss_fn, acc_fn = get_loss_and_acc(loss, threshold)
 
-        for i in tqdm(range(num_epochs)):
-            for j, (H_pos, H_neg, y) in enumerate(tqdm(iterate_dataset_posneg(current_posneg, physical_batch_size))):
+        wandb.define_metric(f"layer_{self.num}/train/step")
+        wandb.define_metric(f"layer_{self.num}/train/*", step_metric=f"layer_{self.num}/train/step")
+        wandb.define_metric(f"layer_{self.num}/test/*", step_metric=f"layer_{self.num}/test/step")
+
+        self.train()
+
+        for i in tqdm(range(num_epochs)): # , desc=f"Loss {loss_value.item()}"
+
+            lastweight0 = self.weight[0].clone()
+
+            self.opt.zero_grad()
+
+            for j, (X_pos, X_neg, y) in enumerate(iterate_dataset_posneg(current_posneg, physical_batch_size)):
                 
-                g_pos = self.forward(H_pos).pow(2).mean(1)
-                g_neg = self.forward(H_neg).pow(2).mean(1)
+                H_pos = self.forward(X_pos)
+                g_pos = goodness_fn(H_pos)
+                H_neg = self.forward(X_neg)
+                g_neg = goodness_fn(H_neg)
 
-                # The following loss pushes pos (neg) samples to
-                # values larger (smaller) than the self.threshold.
-                loss_val = loss_fn(g_pos, g_neg)
-                self.train_loss[i+j] = loss_val
-                #loss = torch.log(1 + torch.exp(torch.cat([
-                #    -g_pos + self.threshold,
-                #    g_neg - self.threshold]))).mean()
+                # loss_val = (-g_pos + g_neg).mean()
+                loss_value = loss_fn(g_pos, g_neg)
+                self.train_loss[i*RATIO+j] = loss_value.item()
+
+                ap, an = calculate_goodness_acc(g_pos, g_neg, threshold)
+                ap, an = ap.item(), an.item()
+                self.train_acc[i*RATIO+j] = (ap+an) / 2
+
+                if current_test is not None:
+                    loss_test_value, acc_test_value_pos, acc_test_value_neg = self.evaluate(current_test, goodness_fn, loss, threshold)
+
+                    self.test_loss[i*RATIO+j] = loss_test_value
+                    self.test_acc[i*RATIO+j] = (acc_test_value_pos + acc_test_value_neg) / 2
+                    wandb.log({f'layer_{self.num}/test/step': i*RATIO+j, f'layer_{self.num}/test/loss': self.test_loss[i+j], f'layer_{self.num}/test/acc_pos': acc_test_value_pos, f'layer_{self.num}/test/acc_neg': acc_test_value_neg, f'layer_{self.num}/test/acc': self.test_acc[i+j]})
+
+                wandb.log({f'layer_{self.num}/train/step': i*RATIO+j, f'layer_{self.num}/train/step_epoch': i, f'layer_{self.num}/train/loss': self.train_loss[i+j], f'layer_{self.num}/train/goodness_pos_mean': g_pos.mean().item(), f'layer_{self.num}/train/goodness_neg_mean': g_neg.mean().item(), f'layer_{self.num}/train/acc_pos': ap, f'layer_{self.num}/train/acc_neg': an, f'layer_{self.num}/train/acc': self.train_acc[i+j]})
+                # wandb.log({'test/step': j, 'test/acc': test_acc[step], 'test/loss': test_loss[step]})
                 
                 if i % eos_every == 0 and j == 0:
-                    evals = get_hessian_eigenvalues(self, loss_fn, current_posneg_abridged, neigs=2, physical_batch_size=physical_batch_size)
+                    evals = get_hessian_eigenvalues(self, loss_fn, current_posneg_abridged, neigs=5, physical_batch_size=physical_batch_size)
                     self.sharpness[i//eos_every] = evals[0]
+                    print(f"Sharpness {evals[0]}")
+                    #print(f"Loss {loss_value.item()}")
 
-                self.opt.zero_grad()
+                    wandb.log({f'layer_{self.num}/train/step': i*RATIO+j, f'layer_{self.num}/train/e1': evals[0], f'layer_{self.num}/train/e2': evals[1], f'layer_{self.num}/train/e3': evals[2], f'layer_{self.num}/train/e4': evals[3], f'layer_{self.num}/train/e5': evals[4]})
+
                 # this backward just compute the derivative and hence
                 # is not considered backpropagation.
-                loss_val.backward()
+                loss_value.backward()
                 self.opt.step()
 
-                #if test is not None:
-                #    self.evaluate(test)
+            """learning_rate = 100
+            for f in self.parameters():
+                print("hi", f.grad.data.max())
+                f.data.sub_(f.grad.data * learning_rate)"""
+            # print(self.weight.grad)
+            wandb.log({f'layer_{self.num}/train/step': i*RATIO+j, f'layer_{self.num}/train/diff': (self.weight - lastweight0).mean().item()})
 
-        return self.train_loss, self.sharpness
+        return self.train_loss, self.train_acc, self.test_loss, self.test_acc, self.sharpness
 
     @torch.no_grad()
-    def evaluate(self, test_dataset, loss):
+    def evaluate(self, test_dataset, goodness_fn, loss, threshold):
+        # FIXME what now maybe linear probing?
+        # For now acc whether good data assigned to be good
 
-        loss_fn, acc_fn = get_loss_and_acc(loss, threshold=self.threshold)
+        if threshold is None:
+            threshold = self.threshold
+
+        loss_fn, acc_fn = get_loss_and_acc(loss, threshold)
+
+        losses, acces_pos, acces_neg = [], [], []
 
         for j, (H_pos, H_neg, y) in enumerate(tqdm(iterate_dataset_posneg(test_dataset, len(test_dataset)))):
-            g_pos = self.forward(H_pos).pow(2).mean(1)
-            g_neg = self.forward(H_neg).pow(2).mean(1)
+            g_pos = goodness_fn(self.forward(H_pos))
+            g_neg = goodness_fn(self.forward(H_neg))
 
-            # FIXME what now maybe linear probing?
+            losses.append(loss_fn(g_pos, g_neg).item())
+            ap, an = calculate_goodness_acc(g_pos, g_neg, threshold)
+            acces_pos.append(ap.item())
+            acces_neg.append(an.item())
 
-        return
+        loss_value = sum(losses) / len(losses)
+        acc_value_pos = sum(acces_pos) / len(acces_pos)
+        acc_value_neg = sum(acces_neg) / len(acces_neg)
+
+
+        return loss_value, acc_value_pos, acc_value_neg
+
+#class ConvLayer(nn.Conv2d):
+#    def __init__(self, in_features, out_features, kernel_size, stride, padding, dilation,
+#                 bias=True, device=None, dtype=None):
+#        super().__init__(in_features, out_features, kernel_size, stride, padding, dilation, bias=bias, device=device, dtype=dtype)
+
 
 ## PLOT
+
+def plot_rez_2(lst_losss, lst_sharp, lst_acc_train, lst_acc_test, path):
+    fig = plt.figure(figsize=(5, 5), dpi=100)
+
+    plt.subplot(2, 2, 1)
+    plt.plot(lst_losss[0])
+    plt.title("train loss")
+    plt.xlabel("iteration layer 0")
+
+    plt.subplot(2, 2, 2)
+    plt.plot(lst_sharp[0])
+    plt.title("train sharpness")
+    plt.xlabel("iteration layer 0")
+
+    plt.subplot(2, 2, 3)
+    plt.plot(lst_acc_train[0])
+    plt.title("train acc")
+    plt.xlabel("iteration layer 0")
+
+    plt.subplot(2, 2, 4)
+    plt.plot(lst_acc_test[0])
+    plt.title("test acc")
+    plt.xlabel("iteration layer 0")
+
+    plt.tight_layout()
+    wandb.log({'rez': wandb.Image(plt.gcf())}) # caption="Aggregation"
+    plt.savefig(path)
 
 def plot_rez_3(lst_losss, lst_sharp, lst_acc_train, lst_acc_test, path):
     fig = plt.figure(figsize=(5, 5), dpi=100)
@@ -525,27 +690,27 @@ def plot_rez_3(lst_losss, lst_sharp, lst_acc_train, lst_acc_test, path):
     plt.xlabel("iteration layer 0")
 
     plt.subplot(2, 3, 3)
-    plt.plot(lst_losss[1])
-    plt.title("train loss")
-    plt.xlabel("iteration layer 1")
-
-    plt.subplot(2, 3, 4)
     plt.plot(lst_sharp[1])
     plt.title("train sharpness")
     plt.xlabel("iteration layer 1")
 
+    plt.subplot(2, 3, 4)
+    plt.plot(lst_losss[1])
+    plt.title("train loss")
+    plt.xlabel("iteration layer 1")
+
     plt.subplot(2, 3, 5)
-    plt.plot(lst_acc_train)
+    plt.plot(lst_acc_train[0])
     plt.title("train acc")
-    plt.xlabel("layer")
+    plt.xlabel("iteration layer 1")
 
     plt.subplot(2, 3, 6)
-    plt.plot(lst_acc_test)
+    plt.plot(lst_acc_test[0])
     plt.title("test acc")
-    plt.xlabel("layer")
+    plt.xlabel("iteration layer 0")
 
     plt.tight_layout()
-
+    wandb.log({'rez': wandb.Image(plt.gcf())})
     plt.savefig(path)
 
 def plot_rez_4(lst_losss, lst_sharp, lst_acc_train, lst_acc_test, path):
@@ -582,17 +747,17 @@ def plot_rez_4(lst_losss, lst_sharp, lst_acc_train, lst_acc_test, path):
     plt.xlabel("iteration layer 2")
 
     plt.subplot(2, 4, 7)
-    plt.plot(lst_acc_train)
+    plt.plot(lst_acc_train[0])
     plt.title("train acc")
-    plt.xlabel("layer")
+    plt.xlabel("iteration layer 1")
 
     plt.subplot(2, 4, 8)
-    plt.plot(lst_acc_test)
+    plt.plot(lst_acc_test[0])
     plt.title("test acc")
-    plt.xlabel("layer")
+    plt.xlabel("iteration layer 0")
 
     plt.tight_layout()
-
+    wandb.log({'rez': wandb.Image(plt.gcf())})
     plt.savefig(path)
 
     #plt.scatter(torch.arange(len(gd_sharpness)) * gd_eig_freq, gd_sharpness, s=5)
@@ -607,7 +772,7 @@ def main_old():
 
     net = Net([784, 500, 500])
     x, y = next(iter(train_loader))
-    x, y = x.cuda(), y.cuda()
+    x, y = x.to(DEVICE), y.to(DEVICE)
     x_pos = overlay_y_on_x(x, y)
     rnd = torch.randperm(x.size(0))
     x_neg = overlay_y_on_x(x, y[rnd])
@@ -620,29 +785,61 @@ def main_old():
     print('train error:', 1.0 - net.predict(x).eq(y).float().mean().item())
 
     x_te, y_te = next(iter(test_loader))
-    x_te, y_te = x_te.cuda(), y_te.cuda()
+    x_te, y_te = x_te.to(DEVICE), y_te.to(DEVICE)
 
     print('test error:', 1.0 - net.predict(x_te).eq(y_te).float().mean().item())    
     
-
 def main():
 
-    dataset="cifar10-5k-1k"
-    loss="simple"
-
-    torch.manual_seed(1234)
-    neurons = [3072, 500, 500]
-    #epochs = [10, 10]
-    epochs = [1000, 1000]
-    net = Net(neurons)
+    f = open("/home/mateusz.pyla/stan/edge-of-stability/wandb_key.txt", "r")
+    wandb_key = f.read()
+    f = open("/home/mateusz.pyla/stan/edge-of-stability/wandb_entity.txt", "r")
+    wandb_entity = f.read()
+    wandb.login(key=wandb_key)
+    wandb_project = "FFA_EOS"
+    wandb_log = "/home/mateusz.pyla/stan/edge-of-stability/FFA"
     
-    lst_losss, lst_sharp, lst_acc_train, lst_acc_test = net.train(dataset, loss, epochs, eos_every=-1)
+    cifar = False
 
-    print(lst_losss, lst_sharp, lst_acc_train, lst_acc_test)
+    if cifar:
+        dataset="cifar10-50k-1k"
+        input_dim=3072
+        overlay_fn = overlay_onehot_y_on_x_rgb
+    else:
+        dataset="mnist-50k-1k"
+        input_dim=784
+        overlay_fn = overlay_onehot_y_on_x
 
-    path = "/home/mateusz.pyla/stan/edge-of-stability/figures/ffa/3072_500_500_D.png"
-    plot_rez_3(lst_losss, lst_sharp, lst_acc_train, lst_acc_test, path)
+    loss="simple"
+    goodness_fn=simple_goodness
+    threshold=2
+    lr=0.1
+
+    eos_every = 10
+
+    torch.manual_seed(0)
+    neurons = [input_dim, input_dim] #, input_dim] # [input_dim, 500, 500]
+    num_epochs = 3000
+    epochs = [num_epochs] * (len(neurons)-1)
+    if len(epochs) == 1:
+        plot_fn = plot_rez_2
+    elif len(epochs) == 2:
+        plot_fn = plot_rez_3
+    else:
+        plot_fn = plot_rez_4
+    path = "/home/mateusz.pyla/stan/edge-of-stability/FFA/"
+    file_name = f"FFA_data{dataset}_layers{len(epochs)}_neurons{neurons[1:]}_epochs{num_epochs}_threshold{threshold}_lr{lr}_eos{eos_every}.png"
+    
+    config = {"data": dataset, "loss": loss, "threshold": threshold, "lr": lr, "epochs": num_epochs, "eos_every": eos_every, "len_layers": len(epochs), "file_name": file_name}
+    run = wandb.init(project=wandb_project, entity=wandb_entity, dir=wandb_log, config=config)
+
+    net = Net(neurons)
+
+    lst_losss_train, lst_losss_test, lst_acc_train, lst_acc_test, lst_sharp = net.train(dataset, goodness_fn, overlay_fn, loss, threshold, lr, epochs, eos_every=eos_every)
+
+    print(lst_losss_train, lst_losss_test, lst_acc_train, lst_acc_test, lst_sharp)
+    
+    plot_fn(lst_losss_train, lst_sharp, lst_acc_train, lst_acc_test, path + file_name)
 
 if __name__ == "__main__":
-    # main_old()
     main()

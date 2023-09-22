@@ -1,5 +1,9 @@
-wandb
-outputs
+outputs/
+figures/
+wandb/
+wandb_entity.txt
+wandb_key.txt
+wandb_project.txt
 src/__pycache__
 batch
 notebooks

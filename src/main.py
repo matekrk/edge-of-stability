@@ -36,7 +36,6 @@ if __name__ == "__main__":
                         help="the frequency at which we save resuls")
     parser.add_argument("--save_model", type=bool, default=False,
                         help="if 'true', save model weights at end of training")
-    parser.add_argument("--wandb_project", type=str, default="", help="If '' then no wandb log. Entity from wandb_key.txt")
     parser.add_argument("--result_dir", type=str, default=os.path.abspath(os.path.join(os.getcwd(), os.pardir)))
     parser.add_argument("--dataset_dir", type=str, default=os.path.abspath(os.path.join(os.getcwd(), os.pardir)))
 
@@ -60,8 +59,8 @@ if __name__ == "__main__":
                         help=" the Runge-Kutta step size is min(alpha / [estimated sharpness], max_step_size)")
 
     # PLOT
-    parser.add_argument("--plot_classic", type=bool, default=True, help="if 'true', plot as in the paper")
-    parser.add_argument("--plot_trajectory", type=bool, default=True, help="if 'true', plot projected trajectory by concat of test feat repr")
+    parser.add_argument("--plot_classic", action=argparse.BooleanOptionalAction, help="plot as in the paper")
+    parser.add_argument("--plot_trajectory", action=argparse.BooleanOptionalAction, help="plot projected trajectory by concat of test feat repr")
     parser.add_argument("--trajectory_first_steps", type=int, default=50, help="how many first steps take into plotting")
     parser.add_argument("--trajectory_first_examples", type=int, default=50, help="how many first images from test set to concat")
 
@@ -74,8 +73,10 @@ if __name__ == "__main__":
     wandb_key = f.read()
     f = open("wandb_entity.txt", "r")
     wandb_entity = f.read()
+    f = open("wandb_project.txt", "r")
+    wandb_project = f.read()
     wandb.login(key=wandb_key)
-    run = wandb.init(project=args.wandb_project, entity=wandb_entity, config=args, dir=os.environ["RESULTS"])
+    run = wandb.init(project=wandb_project, entity=wandb_entity, config=args, dir=os.environ["RESULTS"])
 
     if args.method == "gd":
         main_gd(dataset=args.dataset, arch_id=args.arch_id, loss=args.loss, opt=args.opt, lr=args.lr, max_steps=args.max_steps,

@@ -42,6 +42,9 @@ if __name__ == "__main__":
     parser.add_argument("--minirestart_reducenorm", action=argparse.BooleanOptionalAction, help="Minirestart at EOS.")
     parser.add_argument("--minirestart_addnoise", action=argparse.BooleanOptionalAction, help="Minirestart at EOS.")
     parser.add_argument("--minirestart_backtoinit", action=argparse.BooleanOptionalAction, help="Minirestart at EOS.")
+    parser.add_argument("--eliminate_outliners", action=argparse.BooleanOptionalAction, help="Eliminate outliners contributing to EOS.")
+    parser.add_argument("--eliminate_outliners_gamma", type=float, default=1.0,
+                        help="how many std to remove when computing the criterion on outliners.")
 
     # GD
     #parser.add_argument("--gd", type=bool, default=False, help="if 'true', gradient descent")
@@ -89,7 +92,8 @@ if __name__ == "__main__":
             nproj=args.nproj, loss_goal=args.loss_goal, acc_goal=args.acc_goal, abridged_size=args.abridged_size, seed=args.seed,
             trajectories=args.plot_trajectory, trajectories_first=args.trajectory_first_steps,
             ministart_addneurons = args.minirestart_addneurons, minirestart_reducenorm=args.minirestart_reducenorm, 
-            minirestart_addnoise = args.minirestart_addnoise, minirestart_backtoinit = args.minirestart_backtoinit)
+            minirestart_addnoise = args.minirestart_addnoise, minirestart_backtoinit = args.minirestart_backtoinit,
+            eliminate_outliners=args.eliminate_outliners, eliminate_outliners_gamma=args.eliminate_outliners_gamma)
 
     if args.method == "flow":
         main_flow(dataset=args.dataset, arch_id=args.arch_id, loss=args.loss, max_time=args.max_time, tick=args.tick,

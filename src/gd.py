@@ -73,7 +73,7 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
 
         sky_activations[step], red_activations[step], green_activations[step] = compute_logits(network, [loss_fn, acc_fn])
         for i_class in range(len(sky_activations[step])):
-            wandb.log({'artificial/step': step, f'artificial/sky/{i_class}': sky_activations[step, i_class], 'artificial/red': red_activations[step, i_class], 'artificial/green': green_activations[step, i_class]})
+            wandb.log({'artificial/step': step, f'artificial/sky/{i_class}': sky_activations[step, i_class], f'artificial/red/{i_class}': red_activations[step, i_class], f'artificial/green/{i_class}': green_activations[step, i_class]})
 
         if eig_freq != -1 and step % eig_freq == 0:
             if trajectories and step < trajectories_first:
@@ -84,6 +84,7 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
             
             eigs[step // eig_freq, :] = get_hessian_eigenvalues(network, loss_fn, abridged_train, neigs=neigs,
                                                                 physical_batch_size=physical_batch_size)
+            """
             if obtained_eos(eigs, lr):
                 num_network_layers = network.n_layers 
                 active_layers = []
@@ -95,6 +96,7 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
                     network.reducenorm(active_layers)
                 if minirestart_backtoinit:
                     network.restartweight(active_layers)
+            """
 
             wandb.log({'train/step': step, 'train/e1': eigs[step // eig_freq, 0], 'train/e2': eigs[step // eig_freq, 1]})
 
@@ -185,6 +187,9 @@ if __name__ == "__main__":
     parser.add_argument("--minirestart_reducenorm", action=argparse.BooleanOptionalAction, help="Minirestart at EOS.")
     parser.add_argument("--minirestart_addnoise", action=argparse.BooleanOptionalAction, help="Minirestart at EOS.")
     parser.add_argument("--minirestart_backtoinit", action=argparse.BooleanOptionalAction, help="Minirestart at EOS.")
+    parser.add_argument("--eliminate_outliners", action=argparse.BooleanOptionalAction, help="Eliminate outliners contributing to EOS.")
+    parser.add_argument("--eliminate_outliners_gamma", type=float, default=1.0,
+                        help="how many std to remove when computing the criterion on outliners.")
     args = parser.parse_args()
 
     main(dataset=args.dataset, arch_id=args.arch_id, loss=args.loss, opt=args.opt, lr=args.lr, max_steps=args.max_steps,
@@ -193,4 +198,5 @@ if __name__ == "__main__":
          nproj=args.nproj, loss_goal=args.loss_goal, acc_goal=args.acc_goal, abridged_size=args.abridged_size,
          seed=args.seed, trajectories=args.trajectories, trajectories_first=args.trajectories_first,
          ministart_addneurons = args.minirestart_addneurons, minirestart_reducenorm=args.minirestart_reducenorm, 
-         minirestart_addnoise = args.minirestart_addnoise, minirestart_backtoinit = args.minirestart_backtoinit)
+         minirestart_addnoise = args.minirestart_addnoise, minirestart_backtoinit = args.minirestart_backtoinit,
+         eliminate_outliners=args.eliminate_outliners, eliminate_outliners_gamma=args.eliminate_outliners_gamma)

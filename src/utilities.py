@@ -159,6 +159,16 @@ def get_hessian_eigenvalues(network: nn.Module, loss_fn: nn.Module, dataset: Dat
     return evals
 
 
+def obtained_eos(evalues, lr, window=10, relative_error=0.1):
+    if len(evalues) < window:
+        return False
+    convergence = 2/lr
+    for i in range(1, window+1):
+        if abs(evalues[-i] - convergence) > relative_error * convergence:
+            return False
+    return True
+
+
 def compute_gradient(network: nn.Module, loss_fn: nn.Module,
                      dataset: Dataset, physical_batch_size: int = DEFAULT_PHYS_BS):
     """ Compute the gradient of the loss function at the current network parameters. """

@@ -38,6 +38,10 @@ if __name__ == "__main__":
                         help="if 'true', save model weights at end of training")
     parser.add_argument("--result_dir", type=str, default=os.path.abspath(os.path.join(os.getcwd(), os.pardir)))
     parser.add_argument("--dataset_dir", type=str, default=os.path.abspath(os.path.join(os.getcwd(), os.pardir)))
+    parser.add_argument("--minirestart_addneurons", action=argparse.BooleanOptionalAction, help="Minirestart at EOS.")
+    parser.add_argument("--minirestart_reducenorm", action=argparse.BooleanOptionalAction, help="Minirestart at EOS.")
+    parser.add_argument("--minirestart_addnoise", action=argparse.BooleanOptionalAction, help="Minirestart at EOS.")
+    parser.add_argument("--minirestart_backtoinit", action=argparse.BooleanOptionalAction, help="Minirestart at EOS.")
 
     # GD
     #parser.add_argument("--gd", type=bool, default=False, help="if 'true', gradient descent")
@@ -83,7 +87,9 @@ if __name__ == "__main__":
             neigs=args.neigs, physical_batch_size=args.physical_batch_size, eig_freq=args.eig_freq,
             iterate_freq=args.iterate_freq, save_freq=args.save_freq, save_model=args.save_model, beta=args.beta,
             nproj=args.nproj, loss_goal=args.loss_goal, acc_goal=args.acc_goal, abridged_size=args.abridged_size, seed=args.seed,
-            trajectories=args.plot_trajectory, trajectories_first=args.trajectory_first_steps)
+            trajectories=args.plot_trajectory, trajectories_first=args.trajectory_first_steps,
+            ministart_addneurons = args.minirestart_addneurons, minirestart_reducenorm=args.minirestart_reducenorm, 
+            minirestart_addnoise = args.minirestart_addnoise, minirestart_backtoinit = args.minirestart_backtoinit)
 
     if args.method == "flow":
         main_flow(dataset=args.dataset, arch_id=args.arch_id, loss=args.loss, max_time=args.max_time, tick=args.tick,

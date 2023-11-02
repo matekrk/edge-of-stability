@@ -7,7 +7,7 @@ import argparse
 
 from archs import load_architecture
 from utilities import get_gd_optimizer, get_gd_directory, get_loss_and_acc, compute_losses, save_features, \
-    save_files, save_files_final, get_hessian_eigenvalues, iterate_dataset, compute_space, calculate_trajectory_point
+    save_files, save_files_final, get_hessian_eigenvalues, iterate_dataset, compute_space, calculate_trajectory_point, obtained_eos
 from relative_space import transform_space
 from plot import plot_pca_space, plot_proj_traj
 from data import load_dataset, take_first, DATASETS
@@ -17,7 +17,9 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
          physical_batch_size: int = 1000, eig_freq: int = -1, iterate_freq: int = -1, save_freq: int = -1,
          save_model: bool = False, beta: float = 0.0, nproj: int = 0,
          loss_goal: float = None, acc_goal: float = None, abridged_size: int = 5000, seed: int = 0,
-         trajectories: bool = False, trajectories_first: int = -1):
+         trajectories: bool = False, trajectories_first: int = -1,
+         ministart_addneurons: bool = False, minirestart_reducenorm: bool = False, 
+         minirestart_addnoise: bool = False, minirestart_backtoinit: bool = False):
     directory = get_gd_directory(dataset, lr, arch_id, seed, opt, loss, beta)
     print(f"output directory: {directory}")
     makedirs(directory, exist_ok=True)
@@ -73,6 +75,18 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
             
             eigs[step // eig_freq, :] = get_hessian_eigenvalues(network, loss_fn, abridged_train, neigs=neigs,
                                                                 physical_batch_size=physical_batch_size)
+            if obtained_eos(eigs, lr):
+                num_network_layers = network.n_layers 
+                active_layers = []
+                if ministart_addneurons:
+                    network.addneurons(active_layers)
+                if minirestart_addnoise:
+                    network.addnoise(active_layers)
+                if minirestart_reducenorm:
+                    network.reducenorm(active_layers)
+                if minirestart_backtoinit:
+                    network.restartweight(active_layers)
+
             wandb.log({'train/step': step, 'train/e1': eigs[step // eig_freq, 0], 'train/e2': eigs[step // eig_freq, 1]})
 
         if iterate_freq != -1 and step % iterate_freq == 0:
@@ -147,10 +161,16 @@ if __name__ == "__main__":
                         help="plot projected trajectory by concat of test feat repr")
     parser.add_argument("--trajectories_first", type=int, default=50,
                         help="how many first steps take into plotting")
+    parser.add_argument("--minirestart_addneurons", action=argparse.BooleanOptionalAction, help="Minirestart at EOS.")
+    parser.add_argument("--minirestart_reducenorm", action=argparse.BooleanOptionalAction, help="Minirestart at EOS.")
+    parser.add_argument("--minirestart_addnoise", action=argparse.BooleanOptionalAction, help="Minirestart at EOS.")
+    parser.add_argument("--minirestart_backtoinit", action=argparse.BooleanOptionalAction, help="Minirestart at EOS.")
     args = parser.parse_args()
 
     main(dataset=args.dataset, arch_id=args.arch_id, loss=args.loss, opt=args.opt, lr=args.lr, max_steps=args.max_steps,
          neigs=args.neigs, physical_batch_size=args.physical_batch_size, eig_freq=args.eig_freq,
          iterate_freq=args.iterate_freq, save_freq=args.save_freq, save_model=args.save_model, beta=args.beta,
          nproj=args.nproj, loss_goal=args.loss_goal, acc_goal=args.acc_goal, abridged_size=args.abridged_size,
-         seed=args.seed, trajectories=args.trajectories, trajectories_first=args.trajectories_first)
+         seed=args.seed, trajectories=args.trajectories, trajectories_first=args.trajectories_first,
+         ministart_addneurons = args.minirestart_addneurons, minirestart_reducenorm=args.minirestart_reducenorm, 
+         minirestart_addnoise = args.minirestart_addnoise, minirestart_backtoinit = args.minirestart_backtoinit)

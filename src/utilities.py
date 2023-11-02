@@ -1,3 +1,4 @@
+from collections import defaultdict
 from typing import List, Tuple, Iterable
 
 import numpy as np
@@ -6,13 +7,28 @@ import torch.nn as nn
 from scipy.sparse.linalg import LinearOperator, eigsh
 from torch import Tensor
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
+from torch.func import functional_call, vmap, grad 
 from torch.optim import SGD
 from torch.optim.optimizer import Optimizer
 from torch.utils.data import Dataset, DataLoader
 import os
+from cifar import make_labels, _one_hot
 
 # the default value for "physical batch size", which is the largest batch size that we try to put on the GPU
 DEFAULT_PHYS_BS = 1000
+
+CIFAR_SHAPE = (32, 32, 3)
+
+def create_uniform_image(background, shape):
+    if background == "sky":
+        pixel = [123, 191, 232]
+    elif background == "red":
+        pixel = [253, 0, 3]
+    elif background == "green":
+        pixel = [11, 241, 4]
+
+    assert len(pixel) == shape[-1]
+    return np.broadcast_to(pixel, shape).transpose(2, 0, 1)
 
 
 def get_gd_directory(dataset: str, lr: float, arch_id: str, seed: int, opt: str, loss: str, beta: float = None):
@@ -55,7 +71,7 @@ def save_files(directory: str, arrays: List[Tuple[str, torch.Tensor]]):
 def save_files_final(directory: str, arrays: List[Tuple[str, torch.Tensor]]):
     """Save a bunch of tensors."""
     for (arr_name, arr) in arrays:
-        torch.save(arr, f"{directory}/{arr_name}_final")
+        torch.save(arr, f"{directory}/{arr_name}_final1")
 
 
 def iterate_dataset(dataset: Dataset, batch_size: int):
@@ -77,6 +93,69 @@ def compute_losses(network: nn.Module, loss_functions: List[nn.Module], dataset:
                 losses[l] += loss_fn(preds, y) / len(dataset)
     return losses
 
+def reduced_batch(network: nn.Module, loss_function: nn.Module, X, Y, strategy="norm"):
+    metrics = []
+    for i in range(len(X)):
+        network.zero_grad()
+        x, y = X[i], Y[i]
+        loss_val = loss_function(network(torch.unsqueeze(x, 0)), torch.unsqueeze(y, 0))
+        loss_val.backward()
+        if strategy == "norm":
+            total_norm = 0.0
+            for p in network.parameters():
+                if p.grad is not None:
+                    total_norm += p.grad.data.norm(2).item()
+            total_norm = total_norm ** (1. / 2)
+            metrics.append(total_norm)
+        elif strategy == "sum trace fim":
+            total_tr_fim = 0.
+
+    network.zero_grad()
+    metrics = np.array(metrics)
+    mean_metrics = np.mean(metrics)
+    std_metrics = np.std(metrics)
+    ind_r = abs(metrics - mean_metrics) < 2 * std_metrics
+    return X[ind_r], Y[ind_r]
+
+def compute_losses_outliners(network: nn.Module, loss_functions: List[nn.Module], dataset: Dataset, batch_size: int = 1): #  remove_outliners: bool = False)
+    assert batch_size == 1
+    assert len(loss_functions) == 1 # FORNOW FIXME
+    loss_fn = loss_functions[0]
+    losses = []
+    with torch.no_grad():
+        for (X, y) in iterate_dataset(dataset, batch_size):
+            preds = network(X)
+            losses.append(loss_fn(preds, y).item())
+    mean_losses = np.mean(losses)
+    var_losses = np.var(losses)
+    hist, bin_edges = np.histogram(losses, 100)
+    ratio_outliners = sum(losses > mean_losses - 2*var_losses) + sum(losses > mean_losses + 2*var_losses)
+    #if not remove_outliners:
+    #    updated_train_dataset = dataset
+    return ratio_outliners / len(dataset), torch.tensor(hist)
+
+def compute_logits(network: nn.Module, loss_functions: List[nn.Module]):
+    L = len(loss_functions)
+    
+    sky = torch.tensor(create_uniform_image("sky", CIFAR_SHAPE), device=next(network.parameters()).device, dtype=next(network.parameters()).dtype)
+    red = torch.tensor(create_uniform_image("red", CIFAR_SHAPE), device=next(network.parameters()).device, dtype=next(network.parameters()).dtype)
+    green = torch.tensor(create_uniform_image("green", CIFAR_SHAPE), device=next(network.parameters()).device, dtype=next(network.parameters()).dtype)
+
+    losses_sky = [0. for _ in range(10)]
+    losses_red = [0. for _ in range(10)]
+    losses_green = [0. for _ in range(10)]
+    with torch.no_grad():
+        pred = network(torch.unsqueeze(sky, 0))
+        for y in range(10):
+            losses_sky[y] = pred[0, y].item()
+        pred = network(torch.unsqueeze(red, 0))
+        for y in range(10):
+            losses_red[y] = pred[0, y].item()
+        pred = network(torch.unsqueeze(green, 0))
+        for y in range(10):
+            losses_green[y] = pred[0, y].item()
+
+    return torch.tensor(losses_sky), torch.tensor(losses_red), torch.tensor(losses_green)
 
 def get_loss_and_acc(loss: str):
     """Return modules to compute the loss and accuracy.  The loss module should be "sum" reduction. """
@@ -137,6 +216,75 @@ def compute_gradient(network: nn.Module, loss_fn: nn.Module,
         batch_gradient = parameters_to_vector(torch.autograd.grad(batch_loss, inputs=network.parameters()))
         average_gradient += batch_gradient
     return average_gradient
+
+
+FORBIDDEN_LAYER_TYPES = [torch.nn.Embedding, torch.nn.LayerNorm, torch.nn.BatchNorm1d, torch.nn.BatchNorm2d]
+def get_every_but_forbidden_parameter_names(model, forbidden_layer_types):
+    """
+    Returns the names of the model parameters that are not inside a forbidden layer.
+    """
+    result = []
+    for name, child in model.named_children():
+        result += [
+            f"{name}.{n}"
+            for n in get_every_but_forbidden_parameter_names(child, forbidden_layer_types)
+            if not isinstance(child, tuple(forbidden_layer_types))
+        ]
+    # Add model specific parameters (defined with nn.Parameter) since they are not in any child.
+    result += list(model._parameters.keys())
+    return result
+
+class TraceFIM(torch.nn.Module):
+    def __init__(self, x_held_out, model, num_classes):
+        super().__init__()
+        self.device = next(model.parameters()).device
+        self.x_held_out = x_held_out
+        self.model = model
+        self.criterion = torch.nn.CrossEntropyLoss().to(self.device)
+        self.ft_criterion = vmap(self.grad_and_trace, in_dims=(None, None, 0), randomness="different")
+        self.penalized_parameter_names = get_every_but_forbidden_parameter_names(self.model, FORBIDDEN_LAYER_TYPES)
+        print("penalized_parameter_names: ", self.penalized_parameter_names)
+        self.labels = torch.arange(num_classes).to(self.device)
+        self.logger = None
+        
+    def compute_loss(self, params, buffers, sample):
+        batch = sample.unsqueeze(0)
+        y_pred = functional_call(self.model, (params, buffers), (batch, ))
+        # y_sampled = Categorical(logits=y_pred).sample()
+        prob = torch.nn.functional.softmax(y_pred, dim=1)
+        idx_sampled = prob.multinomial(1)
+        y_sampled = self.labels[idx_sampled].long().squeeze(-1)
+        loss = self.criterion(y_pred, y_sampled)
+        return loss
+    
+    def grad_and_trace(self, params, buffers, sample):
+        sample_traces = {}
+        sample_grads = grad(self.compute_loss, has_aux=False)(params, buffers, sample)
+        for param_name in sample_grads:
+            gr = sample_grads[param_name]
+            if gr is not None:
+                trace_p = (torch.pow(gr, 2)).sum()
+                sample_traces[param_name] = trace_p
+        return sample_traces
+
+    def forward(self, step):
+        self.model.eval()
+        params = {k: v.detach() for k, v in self.model.named_parameters() if k in self.penalized_parameter_names and v.requires_grad}
+        buffers = {}
+        ft_per_sample_grads = self.ft_criterion(params, buffers, self.x_held_out)
+        ft_per_sample_grads = {k: v.detach().data for k, v in ft_per_sample_grads.items()}
+        evaluators = defaultdict(float)
+        overall_trace = 0.0
+        for param_name in ft_per_sample_grads:
+            trace_p = ft_per_sample_grads[param_name].mean()
+            evaluators[f'trace_fim/{param_name}'] += trace_p.item()
+            if param_name in self.penalized_parameter_names:
+                overall_trace += trace_p.item()
+         
+        evaluators[f'trace_fim/overall_trace'] = overall_trace
+        evaluators['steps/trace_fim'] = step
+        self.model.train()
+        self.logger.log_scalars(evaluators, step)
 
 
 class AtParams(object):

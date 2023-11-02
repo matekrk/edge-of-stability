@@ -8,13 +8,14 @@ import argparse
 from archs import load_architecture
 from utilities import get_gd_optimizer, get_gd_directory, get_loss_and_acc, compute_losses, \
     save_files, save_files_final, get_hessian_eigenvalues, iterate_dataset
+from utilities import compute_losses_outliners, compute_logits, reduced_batch
 from data import load_dataset, take_first, DATASETS
 
 
 def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: int, neigs: int = 0,
          physical_batch_size: int = 1000, eig_freq: int = -1, iterate_freq: int = -1, save_freq: int = -1,
          save_model: bool = False, beta: float = 0.0, nproj: int = 0,
-         loss_goal: float = None, acc_goal: float = None, abridged_size: int = 5000, seed: int = 0):
+         loss_goal: float = None, acc_goal: float = None, abridged_size: int = 5000, seed: int = 0, eliminate_outliners: bool = False):
     directory = get_gd_directory(dataset, lr, arch_id, seed, opt, loss, beta)
     print(f"output directory: {directory}")
     makedirs(directory, exist_ok=True)
@@ -34,6 +35,9 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
 
     train_loss, test_loss, train_acc, test_acc = \
         torch.zeros(max_steps), torch.zeros(max_steps), torch.zeros(max_steps), torch.zeros(max_steps)
+    train_outliners = torch.zeros(max_steps)
+    train_outliners_histogram = torch.zeros((max_steps, 100))
+    sky_activations, red_activations, green_activations = torch.zeros((max_steps, 10)), torch.zeros((max_steps, 10)), torch.zeros((max_steps, 10))
     iterates = torch.zeros(max_steps // iterate_freq if iterate_freq > 0 else 0, len(projectors))
     eigs = torch.zeros(max_steps // eig_freq if eig_freq >= 0 else 0, neigs)
 
@@ -41,6 +45,10 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
         train_loss[step], train_acc[step] = compute_losses(network, [loss_fn, acc_fn], train_dataset,
                                                            physical_batch_size)
         test_loss[step], test_acc[step] = compute_losses(network, [loss_fn, acc_fn], test_dataset, physical_batch_size)
+
+        # individual losses
+        # train_outliners[step], train_outliners_histogram[step] = compute_losses_outliners(network, [loss_fn], train_dataset, batch_size=1)
+        sky_activations[step], red_activations[step], green_activations[step] = compute_logits(network, [loss_fn, acc_fn])
 
         if eig_freq != -1 and step % eig_freq == 0:
             eigs[step // eig_freq, :] = get_hessian_eigenvalues(network, loss_fn, abridged_train, neigs=neigs,
@@ -61,17 +69,27 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
             break
 
         optimizer.zero_grad()
+        to_cal_mean = []
         for (X, y) in iterate_dataset(train_dataset, physical_batch_size):
-            loss = loss_fn(network(X.cuda()), y.cuda()) / len(train_dataset)
+            if eliminate_outliners:
+                X_r, y_r = reduced_batch(network, loss_fn, X.cuda(), y.cuda(), strategy="norm")
+            else:
+                X_r, y_r = X.cuda(), y.cuda()
+            to_cal_mean.append(len(X_r)/len(X))
+            loss = loss_fn(network(X_r), y_r) / len(train_dataset)
             loss.backward()
         optimizer.step()
+        train_outliners[step] = sum(to_cal_mean)/len(to_cal_mean)
 
     save_files_final(directory,
                      [("eigs", eigs[:(step + 1) // eig_freq]), ("iterates", iterates[:(step + 1) // iterate_freq]),
                       ("train_loss", train_loss[:step + 1]), ("test_loss", test_loss[:step + 1]),
-                      ("train_acc", train_acc[:step + 1]), ("test_acc", test_acc[:step + 1])])
+                      ("train_acc", train_acc[:step + 1]), ("test_acc", test_acc[:step + 1]),
+                      ("train_outliners", train_outliners[:step + 1]), ("train_outliners_histogram", train_outliners_histogram[:step + 1]),
+                      ("sky_activations", sky_activations[:step + 1]), ("red_activations", red_activations[:step + 1]), ("green_activations", green_activations[:step + 1])])
     if save_model:
         torch.save(network.state_dict(), f"{directory}/snapshot_final")
+    print("***DONE***")
 
 
 if __name__ == "__main__":
@@ -103,10 +121,12 @@ if __name__ == "__main__":
                         help="the frequency at which we save resuls")
     parser.add_argument("--save_model", type=bool, default=False,
                         help="if 'true', save model weights at end of training")
+    parser.add_argument("--eliminate_outliners", type=bool, default=False,
+                        help="if 'true', eliminate outliners")
     args = parser.parse_args()
 
     main(dataset=args.dataset, arch_id=args.arch_id, loss=args.loss, opt=args.opt, lr=args.lr, max_steps=args.max_steps,
          neigs=args.neigs, physical_batch_size=args.physical_batch_size, eig_freq=args.eig_freq,
          iterate_freq=args.iterate_freq, save_freq=args.save_freq, save_model=args.save_model, beta=args.beta,
          nproj=args.nproj, loss_goal=args.loss_goal, acc_goal=args.acc_goal, abridged_size=args.abridged_size,
-         seed=args.seed)
+         seed=args.seed, eliminate_outliners=args.eliminate_outliners)

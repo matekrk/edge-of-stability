@@ -4,3 +4,9 @@ upload.sh
 demo.py
 .DS_Store
 .idea
+results/
+outputs/
+figures/
+data/
+cifar_samples/
+src/__pycache__

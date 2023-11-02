@@ -306,3 +306,7 @@ The optional parameters of `src/flow.py` are:
 - `abridged_size` [int, defaults to 5000]: see above
 - `save_model` [bool, defaults to False]: see above
 
+#### FFA
+ffa_mlp
+ffa_conv
+ffa_conv_mlp

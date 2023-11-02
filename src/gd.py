@@ -8,6 +8,7 @@ import argparse
 from archs import load_architecture
 from utilities import get_gd_optimizer, get_gd_directory, get_loss_and_acc, compute_losses, save_features, \
     save_files, save_files_final, get_hessian_eigenvalues, iterate_dataset, compute_space, calculate_trajectory_point, obtained_eos
+from utilities import compute_logits, reduced_batch
 from relative_space import transform_space
 from plot import plot_pca_space, plot_proj_traj
 from data import load_dataset, take_first, DATASETS
@@ -19,7 +20,8 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
          loss_goal: float = None, acc_goal: float = None, abridged_size: int = 5000, seed: int = 0,
          trajectories: bool = False, trajectories_first: int = -1,
          ministart_addneurons: bool = False, minirestart_reducenorm: bool = False, 
-         minirestart_addnoise: bool = False, minirestart_backtoinit: bool = False):
+         minirestart_addnoise: bool = False, minirestart_backtoinit: bool = False, 
+         eliminate_outliners: bool = False, eliminate_outliners_gamma: float = 1.0):
     directory = get_gd_directory(dataset, lr, arch_id, seed, opt, loss, beta)
     print(f"output directory: {directory}")
     makedirs(directory, exist_ok=True)
@@ -45,6 +47,9 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
 
     train_loss, test_loss, train_acc, test_acc = \
         torch.zeros(max_steps), torch.zeros(max_steps), torch.zeros(max_steps), torch.zeros(max_steps)
+    train_outliners = torch.zeros(max_steps)
+    train_outliners_histogram = torch.zeros((max_steps, 100))
+    sky_activations, red_activations, green_activations = torch.zeros((max_steps, 10)), torch.zeros((max_steps, 10)), torch.zeros((max_steps, 10))
     iterates = torch.zeros(max_steps // iterate_freq if iterate_freq > 0 else 0, len(projectors))
     eigs = torch.zeros(max_steps // eig_freq if eig_freq >= 0 else 0, neigs)
 
@@ -65,6 +70,10 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
         (test_loss[step], test_acc[step]), features = compute_losses(network, [loss_fn, acc_fn], test_dataset, physical_batch_size, return_features=True)
         wandb.log({'train/step': step, 'train/acc': train_acc[step], 'train/loss': train_loss[step]})
         wandb.log({'test/step': step, 'test/acc': test_acc[step], 'test/loss': test_loss[step]})
+
+        sky_activations[step], red_activations[step], green_activations[step] = compute_logits(network, [loss_fn, acc_fn])
+        for i_class in range(len(sky_activations[step])):
+            wandb.log({'artificial/step': step, f'artificial/sky/{i_class}': sky_activations[step, i_class], 'artificial/red': red_activations[step, i_class], 'artificial/green': green_activations[step, i_class]})
 
         if eig_freq != -1 and step % eig_freq == 0:
             if trajectories and step < trajectories_first:
@@ -111,21 +120,32 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
                 exploding = -1
 
         optimizer.zero_grad()
+        to_cal_mean = []
         for (X, y) in iterate_dataset(train_dataset, physical_batch_size):
-            loss = loss_fn(network(X.cuda()), y.cuda()) / len(train_dataset)
+            if eliminate_outliners:
+                X_r, y_r = reduced_batch(network, loss_fn, X.cuda(), y.cuda(), strategy="norm", gamma=eliminate_outliners_gamma)
+            else:
+                X_r, y_r = X.cuda(), y.cuda()
+            to_cal_mean.append(len(X_r)/len(X))
+            loss = loss_fn(network(X_r), y_r) / len(train_dataset)
             loss.backward()
         optimizer.step()
+        train_outliners[step] = sum(to_cal_mean)/len(to_cal_mean)
 
     save_files_final(directory,
                      [("eigs", eigs[:(step + 1) // eig_freq]), ("iterates", iterates[:(step + 1) // iterate_freq]),
                       ("train_loss", train_loss[:step + 1]), ("test_loss", test_loss[:step + 1]),
-                      ("train_acc", train_acc[:step + 1]), ("test_acc", test_acc[:step + 1])])
+                      ("train_acc", train_acc[:step + 1]), ("test_acc", test_acc[:step + 1]),
+                      ("train_outliners", train_outliners[:step + 1]), ("train_outliners_histogram", train_outliners_histogram[:step + 1]),
+                      ("sky_activations", sky_activations[:step + 1]), ("red_activations", red_activations[:step + 1]), ("green_activations", green_activations[:step + 1])])
     if save_model:
         torch.save(network.state_dict(), f"{directory}/snapshot_final")
 
     if trajectories:
         torch.save(trajectories_full, path.join(traj_directory, "all.pt"))
         torch.save(y_loss, path.join(traj_directory, "losses.pt"))
+    
+    print("***DONE***")
 
 
 if __name__ == "__main__":

@@ -16,6 +16,19 @@ from relative_space import relative_projection, transform_space
 # the default value for "physical batch size", which is the largest batch size that we try to put on the GPU
 DEFAULT_PHYS_BS = 1000
 
+CIFAR_SHAPE = (32, 32, 3)
+
+def create_uniform_image(background, shape):
+    if background == "sky":
+        pixel = [123, 191, 232]
+    elif background == "red":
+        pixel = [253, 0, 3]
+    elif background == "green":
+        pixel = [11, 241, 4]
+
+    assert len(pixel) == shape[-1]
+    return np.broadcast_to(pixel, shape).transpose(2, 0, 1)
+
 
 def get_gd_directory(dataset: str, lr: float, arch_id: str, seed: int, opt: str, loss: str, beta: float = None):
     """Return the directory in which the results should be saved."""
@@ -69,6 +82,29 @@ def iterate_dataset(dataset: Dataset, batch_size: int):
     for (batch_X, batch_y) in loader:
         yield batch_X.cuda(), batch_y.cuda()
 
+def reduced_batch(network: nn.Module, loss_function: nn.Module, X, Y, strategy="norm", gamma=2.0):
+    metrics = []
+    for i in range(len(X)):
+        network.zero_grad()
+        x, y = X[i], Y[i]
+        loss_val = loss_function(network(torch.unsqueeze(x, 0)), torch.unsqueeze(y, 0))
+        loss_val.backward()
+        if strategy == "norm":
+            total_norm = 0.0
+            for p in network.parameters():
+                if p.grad is not None:
+                    total_norm += p.grad.data.norm(2).item()
+            total_norm = total_norm ** (1. / 2)
+            metrics.append(total_norm)
+        elif strategy == "sum trace fim":
+            total_tr_fim = 0.
+
+    network.zero_grad()
+    metrics = np.array(metrics)
+    mean_metrics = np.mean(metrics)
+    std_metrics = np.std(metrics)
+    ind_r = abs(metrics - mean_metrics) < gamma * std_metrics
+    return X[ind_r], Y[ind_r]
 
 def compute_losses(network: nn.Module, loss_functions: List[nn.Module], dataset: Dataset,
                    batch_size: int = DEFAULT_PHYS_BS, return_features=False):
@@ -167,6 +203,29 @@ def obtained_eos(evalues, lr, window=10, relative_error=0.1):
         if abs(evalues[-i] - convergence) > relative_error * convergence:
             return False
     return True
+
+def compute_logits(network: nn.Module, loss_functions: List[nn.Module]):
+    L = len(loss_functions)
+    
+    sky = torch.tensor(create_uniform_image("sky", CIFAR_SHAPE), device=next(network.parameters()).device, dtype=next(network.parameters()).dtype)
+    red = torch.tensor(create_uniform_image("red", CIFAR_SHAPE), device=next(network.parameters()).device, dtype=next(network.parameters()).dtype)
+    green = torch.tensor(create_uniform_image("green", CIFAR_SHAPE), device=next(network.parameters()).device, dtype=next(network.parameters()).dtype)
+
+    losses_sky = [0. for _ in range(10)]
+    losses_red = [0. for _ in range(10)]
+    losses_green = [0. for _ in range(10)]
+    with torch.no_grad():
+        pred = network(torch.unsqueeze(sky, 0))
+        for y in range(10):
+            losses_sky[y] = pred[0, y].item()
+        pred = network(torch.unsqueeze(red, 0))
+        for y in range(10):
+            losses_red[y] = pred[0, y].item()
+        pred = network(torch.unsqueeze(green, 0))
+        for y in range(10):
+            losses_green[y] = pred[0, y].item()
+
+    return torch.tensor(losses_sky), torch.tensor(losses_red), torch.tensor(losses_green)
 
 
 def compute_gradient(network: nn.Module, loss_fn: nn.Module,

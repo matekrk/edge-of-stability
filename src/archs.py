@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from typing import List
 
 import torch
@@ -35,6 +36,23 @@ def get_pooling(pooling: str):
     elif pooling == 'average':
         return torch.nn.AvgPool2d((2, 2))
 
+class ExtendedSequential(nn.Sequential):
+    def __init__(self, *args):
+        super().__init__()
+        if len(args) == 1 and isinstance(args[0], OrderedDict):
+            for key, module in args[0].items():
+                self.add_module(key, module)
+        else:
+            for idx, module in enumerate(args):
+                self.add_module(str(idx), module)
+    def forward(self, input, return_features=False):
+        for i, module in enumerate(self):
+            input = module(input)
+            if return_features and i == len(self)-2:
+                f = input
+        if return_features:
+            return input, f
+        return input
 
 def fully_connected_net(dataset_name: str, widths: List[int], activation: str, bias: bool = True) -> nn.Module:
     modules = [nn.Flatten()]
@@ -45,7 +63,7 @@ def fully_connected_net(dataset_name: str, widths: List[int], activation: str, b
             get_activation(activation),
         ])
     modules.append(nn.Linear(widths[-1], num_classes(dataset_name), bias=bias))
-    return nn.Sequential(*modules)
+    return ExtendedSequential(*modules)
 
 
 def fully_connected_net_bn(dataset_name: str, widths: List[int], activation: str, bias: bool = True) -> nn.Module:
@@ -58,7 +76,7 @@ def fully_connected_net_bn(dataset_name: str, widths: List[int], activation: str
             nn.BatchNorm1d(widths[l])
         ])
     modules.append(nn.Linear(widths[-1], num_classes(dataset_name), bias=bias))
-    return nn.Sequential(*modules)
+    return ExtendedSequential(*modules)
 
 
 def convnet(dataset_name: str, widths: List[int], activation: str, pooling: str, bias: bool) -> nn.Module:
@@ -74,7 +92,7 @@ def convnet(dataset_name: str, widths: List[int], activation: str, pooling: str,
         size //= 2
     modules.append(nn.Flatten())
     modules.append(nn.Linear(widths[-1]*size*size, num_classes(dataset_name)))
-    return nn.Sequential(*modules)
+    return ExtendedSequential(*modules)
 
 
 def convnet_bn(dataset_name: str, widths: List[int], activation: str, pooling: str, bias: bool) -> nn.Module:
@@ -91,7 +109,7 @@ def convnet_bn(dataset_name: str, widths: List[int], activation: str, pooling: s
         size //= 2
     modules.append(nn.Flatten())
     modules.append(nn.Linear(widths[-1]*size*size, num_classes(dataset_name)))
-    return nn.Sequential(*modules)
+    return ExtendedSequential(*modules)
 
 def make_deeplinear(L: int, d: int, seed=8):
     torch.manual_seed(seed)

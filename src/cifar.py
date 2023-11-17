@@ -26,11 +26,11 @@ def _one_hot(tensor: Tensor, num_classes: int, default=0):
     M[M == 0] = default
     return M.float()
 
-def make_labels(y, loss):
+def make_labels(y, loss, n_classes=10):
     if loss == "ce":
         return y
     elif loss == "mse":
-        return _one_hot(y, 10, 0)
+        return _one_hot(y, n_classes, 0)
 
 
 def load_cifar(loss: str, datasets_folder=None) -> (TensorDataset, TensorDataset):

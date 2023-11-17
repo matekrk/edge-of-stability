@@ -6,6 +6,7 @@ import torch.nn as nn
 
 from resnet_cifar import resnet32
 from vgg import vgg11_nodropout, vgg11_nodropout_bn
+from lenet import lenet_mnist
 from data import num_classes, num_input_channels, image_size, num_pixels
 
 _CONV_OPTIONS = {"kernel_size": 3, "padding": 1, "stride": 1}
@@ -176,6 +177,10 @@ def load_architecture(arch_id: str, dataset_name: str) -> nn.Module:
         return vgg11_nodropout()
     elif arch_id == 'vgg11-bn':
         return vgg11_nodropout_bn()
+    
+    #  ======   real networks on MNIST  =======
+    elif arch_id == 'lenet':
+        return lenet_mnist()
 
     # ====== additional networks ========
     # elif arch_id == 'transformer':

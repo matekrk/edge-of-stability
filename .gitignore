@@ -1,5 +1,8 @@
+data/
+results/
 outputs/
 figures/
+cifar_samples/
 wandb/
 wandb_entity.txt
 wandb_key.txt

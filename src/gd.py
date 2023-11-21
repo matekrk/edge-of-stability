@@ -6,7 +6,7 @@ from torch.nn.utils import parameters_to_vector
 import argparse
 
 from archs import load_architecture
-from utilities import get_gd_optimizer, get_gd_directory, get_loss_and_acc, compute_losses, save_features, \
+from utilities import compute_gradient, compute_losses_inout, get_gd_optimizer, get_gd_directory, get_loss_and_acc, compute_losses, save_features, \
     save_files, save_files_final, get_hessian_eigenvalues, iterate_dataset, compute_space, calculate_trajectory_point, obtained_eos
 from utilities import compute_logits, reduced_batch
 from relative_space import transform_space
@@ -18,12 +18,13 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
          physical_batch_size: int = 1000, eig_freq: int = -1, iterate_freq: int = -1, save_freq: int = -1,
          save_model: bool = False, beta: float = 0.0, nproj: int = 0,
          loss_goal: float = None, acc_goal: float = None, abridged_size: int = 5000, seed: int = 0,
-         trajectories: bool = False, trajectories_first: int = -1,
+         trajectories: bool = False, trajectories_first: int = -1, rgb_activations: bool = False,
          ministart_addneurons: bool = False, minirestart_reducenorm: bool = False, 
          minirestart_addnoise: bool = False, minirestart_backtoinit: bool = False, 
-         eliminate_outliners: bool = False, eliminate_outliners_gamma: float = 1.0):
-    directory = get_gd_directory(dataset, lr, arch_id, seed, opt, loss, beta)
-    print(f"output directory: {directory}")
+         eliminate_outliners: bool = False, eliminate_outliners_strategy: str = "gradient", 
+         eliminate_outliners_gamma: float = 1.0, lr_outliners: float = 0.0, activations_rgb: bool = True):
+    gamma = eliminate_outliners_gamma if eliminate_outliners else None
+    directory = get_gd_directory(dataset, lr, arch_id, seed, opt, loss, beta, gamma)
     makedirs(directory, exist_ok=True)
     if trajectories:
         traj_directory = path.join(directory, "traj")
@@ -42,16 +43,22 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
     projectors = torch.randn(nproj, len(parameters_to_vector(network.parameters())))
 
     optimizer = get_gd_optimizer(network.parameters(), opt, lr, beta)
+    if lr_outliners != 0:
+        optimizer_outliners = get_gd_optimizer(network.parameters(), opt, lr_outliners, beta)
+    else:
+        assert eliminate_outliners
 
     exploding = -1
 
     train_loss, test_loss, train_acc, test_acc = \
         torch.zeros(max_steps), torch.zeros(max_steps), torch.zeros(max_steps), torch.zeros(max_steps)
-    train_outliners = torch.zeros(max_steps)
-    train_outliners_histogram = torch.zeros((max_steps, 100))
-    sky_activations, red_activations, green_activations = torch.zeros((max_steps, 10)), torch.zeros((max_steps, 10)), torch.zeros((max_steps, 10))
+    train_ratio_inliners = torch.zeros(max_steps)
+    train_ratio_inliners_histogram = torch.zeros((max_steps, 100))
+    if rgb_activations:
+        sky_activations, red_activations, green_activations = torch.zeros((max_steps, 10)), torch.zeros((max_steps, 10)), torch.zeros((max_steps, 10))
     iterates = torch.zeros(max_steps // iterate_freq if iterate_freq > 0 else 0, len(projectors))
     eigs = torch.zeros(max_steps // eig_freq if eig_freq >= 0 else 0, neigs)
+    eigs_reduced = torch.zeros(max_steps // eig_freq if eig_freq >= 0 else 0, neigs)
 
     wandb.define_metric("train/step")
     wandb.define_metric("train/*", step_metric="train/step")
@@ -71,9 +78,17 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
         wandb.log({'train/step': step, 'train/acc': train_acc[step], 'train/loss': train_loss[step]})
         wandb.log({'test/step': step, 'test/acc': test_acc[step], 'test/loss': test_loss[step]})
 
-        sky_activations[step], red_activations[step], green_activations[step] = compute_logits(network, [loss_fn, acc_fn])
-        for i_class in range(len(sky_activations[step])):
-            wandb.log({'artificial/step': step, f'artificial/sky/{i_class}': sky_activations[step, i_class], f'artificial/red/{i_class}': red_activations[step, i_class], f'artificial/green/{i_class}': green_activations[step, i_class]})
+        loss_in, acc_in, features_in, loss_out, acc_out, features_out = compute_losses_inout(network, loss_fn, acc_fn, train_dataset, eliminate_outliners_strategy, eliminate_outliners_gamma, physical_batch_size)
+        loss_in_t, acc_in_t, features_in_t, loss_out_t, acc_out_t, features_out_t = compute_losses_inout(network, loss_fn, acc_fn, test_dataset, eliminate_outliners_strategy, eliminate_outliners_gamma, physical_batch_size)
+        wandb.log({'train/step': step, 'train/acc_in': acc_in, 'train/loss_in': loss_in, 'train/features_norm_in': wandb.Histogram(features_in),
+                   'train/acc_out': acc_out, 'train/loss_out': loss_out, 'train/features_norm_out': wandb.Histogram(features_out)})
+        wandb.log({'test/step': step, 'test/acc_in': acc_in_t, 'test/loss_in': loss_in_t, 'test/features_norm_in': wandb.Histogram(features_in_t),
+                   'test/acc_out': acc_out_t, 'test/loss_out': loss_out_t, 'test/features_norm_out': wandb.Histogram(features_out_t)})
+
+        if rgb_activations:
+            sky_activations[step], red_activations[step], green_activations[step] = compute_logits(network, [loss_fn, acc_fn])
+            for i_class in range(len(sky_activations[step])):
+                wandb.log({'artificial/step': step, f'artificial/sky/{i_class}': sky_activations[step, i_class], f'artificial/red/{i_class}': red_activations[step, i_class], f'artificial/green/{i_class}': green_activations[step, i_class]})
 
         if eig_freq != -1 and step % eig_freq == 0:
             if trajectories and step < trajectories_first:
@@ -83,7 +98,14 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
                 y_loss[step//eig_freq] = test_loss[step]
             
             eigs[step // eig_freq, :] = get_hessian_eigenvalues(network, loss_fn, abridged_train, neigs=neigs,
-                                                                physical_batch_size=physical_batch_size)
+                                                                physical_batch_size=abridged_size)
+            
+            if eliminate_outliners:
+                eigs_reduced[step // eig_freq, :] = get_hessian_eigenvalues(network, loss_fn, abridged_train, neigs=neigs,
+                                                                physical_batch_size=abridged_size,
+                                                                eliminate_outliners=eliminate_outliners,
+                                                                eliminate_outliners_strategy=eliminate_outliners_strategy,
+                                                                eliminate_outliners_gamma=eliminate_outliners_gamma)
             """
             if obtained_eos(eigs, lr):
                 num_network_layers = network.n_layers 
@@ -98,7 +120,8 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
                     network.restartweight(active_layers)
             """
 
-            wandb.log({'train/step': step, 'train/e1': eigs[step // eig_freq, 0], 'train/e2': eigs[step // eig_freq, 1]})
+            wandb.log({'train/step': step, 'train/e1': eigs[step // eig_freq, 0], 'train/e2': eigs[step // eig_freq, 1], 'train/2divlr': 2/lr,
+                                            'train/e1reduced': eigs_reduced[step // eig_freq, 0], 'train/e2reduced': eigs_reduced[step // eig_freq, 1]})
 
         if iterate_freq != -1 and step % iterate_freq == 0:
             iterates[step // iterate_freq, :] = projectors.mv(parameters_to_vector(network.parameters()).cpu().detach())
@@ -113,6 +136,7 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
         if (loss_goal != None and train_loss[step] < loss_goal) or (acc_goal != None and train_acc[step] > acc_goal):
             break
 
+        """
         if exploding > -1 or (step > 3 and train_loss[step] > 2 * train_loss[step-1]):
             print("exploding")
             save_features(features, step, traj_directory)
@@ -120,26 +144,46 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
             if train_loss[step] > 5 * train_loss[step-4]:
                 print("stabilized")
                 exploding = -1
-
-        optimizer.zero_grad()
-        to_cal_mean = []
+        """
+        
+        ratio_inliners = []
+        losses_inliners, losses_outliners = [], []
         for (X, y) in iterate_dataset(train_dataset, physical_batch_size):
             if eliminate_outliners:
-                X_r, y_r = reduced_batch(network, loss_fn, X.cuda(), y.cuda(), strategy="norm", gamma=eliminate_outliners_gamma)
+                flag = lr_outliners != 0
+                rez = reduced_batch(network, loss_fn, X.cuda(), y.cuda(), strategy=eliminate_outliners_strategy, gamma=eliminate_outliners_gamma, complement=flag)
             else:
-                X_r, y_r = X.cuda(), y.cuda()
-            to_cal_mean.append(len(X_r)/len(X))
-            loss = loss_fn(network(X_r), y_r) / len(train_dataset)
+                rez = X.cuda(), y.cuda()
+            
+            if lr_outliners != 0:
+                X_in, y_in, X_out, y_out = rez
+
+                optimizer_outliners.zero_grad()
+                loss_outliners = loss_fn(network(X_out), y_out) / len(train_dataset)
+                losses_outliners.append(loss_outliners)
+                loss_outliners.backward()
+                optimizer_outliners.step()
+            else:
+                X_in, y_in = rez
+                X_out, y_out = None, None
+
+            ratio_inliners.append(len(X_in)/len(X))
+            optimizer.zero_grad()
+            loss = loss_fn(network(X_in), y_in) / len(train_dataset)
+            losses_inliners.append(loss.item())
             loss.backward()
-        optimizer.step()
-        train_outliners[step] = sum(to_cal_mean)/len(to_cal_mean)
+            optimizer.step()
+            
+        train_ratio_inliners[step] = sum(ratio_inliners)/len(ratio_inliners)
+        wandb.log({'train/step': step, 'train/ratio_inliners': train_ratio_inliners[step]})
 
     save_files_final(directory,
                      [("eigs", eigs[:(step + 1) // eig_freq]), ("iterates", iterates[:(step + 1) // iterate_freq]),
                       ("train_loss", train_loss[:step + 1]), ("test_loss", test_loss[:step + 1]),
                       ("train_acc", train_acc[:step + 1]), ("test_acc", test_acc[:step + 1]),
-                      ("train_outliners", train_outliners[:step + 1]), ("train_outliners_histogram", train_outliners_histogram[:step + 1]),
-                      ("sky_activations", sky_activations[:step + 1]), ("red_activations", red_activations[:step + 1]), ("green_activations", green_activations[:step + 1])])
+                      ("train_loss_inliners", sum(losses_inliners)/len(losses_inliners)), ("train_loss_outliners", sum(losses_outliners)/len(losses_outliners)),
+                      ("train_inliners", train_ratio_inliners[:step + 1]), ("train_inliners_histogram", train_ratio_inliners_histogram[:step + 1])] + 
+                      [("sky_activations", sky_activations[:step + 1]), ("red_activations", red_activations[:step + 1]), ("green_activations", green_activations[:step + 1])] if rgb_activations else [])
     if save_model:
         torch.save(network.state_dict(), f"{directory}/snapshot_final")
 
@@ -188,6 +232,7 @@ if __name__ == "__main__":
     parser.add_argument("--minirestart_addnoise", action=argparse.BooleanOptionalAction, help="Minirestart at EOS.")
     parser.add_argument("--minirestart_backtoinit", action=argparse.BooleanOptionalAction, help="Minirestart at EOS.")
     parser.add_argument("--eliminate_outliners", action=argparse.BooleanOptionalAction, help="Eliminate outliners contributing to EOS.")
+    parser.add_argument("--eliminate_outliners_strategy", type=str, choices=["computegradient", "gradient", "fisher", "activation", "feature"], help="How to remove outliners.")
     parser.add_argument("--eliminate_outliners_gamma", type=float, default=1.0,
                         help="how many std to remove when computing the criterion on outliners.")
     args = parser.parse_args()
@@ -199,4 +244,5 @@ if __name__ == "__main__":
          seed=args.seed, trajectories=args.trajectories, trajectories_first=args.trajectories_first,
          ministart_addneurons = args.minirestart_addneurons, minirestart_reducenorm=args.minirestart_reducenorm, 
          minirestart_addnoise = args.minirestart_addnoise, minirestart_backtoinit = args.minirestart_backtoinit,
-         eliminate_outliners=args.eliminate_outliners, eliminate_outliners_gamma=args.eliminate_outliners_gamma)
+         eliminate_outliners=args.eliminate_outliners, eliminate_outliners_strategy=args.eliminate_outliners_strategy, 
+         eliminate_outliners_gamma=args.eliminate_outliners_gamma)

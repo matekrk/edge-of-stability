@@ -43,8 +43,10 @@ if __name__ == "__main__":
     parser.add_argument("--minirestart_addnoise", action=argparse.BooleanOptionalAction, help="Minirestart at EOS.")
     parser.add_argument("--minirestart_backtoinit", action=argparse.BooleanOptionalAction, help="Minirestart at EOS.")
     parser.add_argument("--eliminate_outliners", action=argparse.BooleanOptionalAction, help="Eliminate outliners contributing to EOS.")
+    parser.add_argument("--eliminate_outliners_strategy", type=str, choices=["computegradient", "gradient", "fisher", "activation", "feature"], help="How to remove outliners.")
     parser.add_argument("--eliminate_outliners_gamma", type=float, default=1.0,
                         help="how many std to remove when computing the criterion on outliners.")
+    parser.add_argument("--lr_outliners", type=float, help="the learning rate", required='method'=="gd")
 
     # GD
     #parser.add_argument("--gd", type=bool, default=False, help="if 'true', gradient descent")
@@ -70,6 +72,7 @@ if __name__ == "__main__":
     parser.add_argument("--plot_trajectory", action=argparse.BooleanOptionalAction, help="plot projected trajectory by concat of test feat repr")
     parser.add_argument("--trajectory_first_steps", type=int, default=50, help="how many first steps take into plotting")
     parser.add_argument("--trajectory_first_examples", type=int, default=50, help="how many first images from test set to concat")
+    parser.add_argument("--plot_rgb_activations", action=argparse.BooleanOptionalAction, help="plot activations of artificial RGB images")
 
     args = parser.parse_args()
 
@@ -90,10 +93,12 @@ if __name__ == "__main__":
             neigs=args.neigs, physical_batch_size=args.physical_batch_size, eig_freq=args.eig_freq,
             iterate_freq=args.iterate_freq, save_freq=args.save_freq, save_model=args.save_model, beta=args.beta,
             nproj=args.nproj, loss_goal=args.loss_goal, acc_goal=args.acc_goal, abridged_size=args.abridged_size, seed=args.seed,
-            trajectories=args.plot_trajectory, trajectories_first=args.trajectory_first_steps,
+            trajectories = args.plot_trajectory, trajectories_first = args.trajectory_first_steps,
+            rgb_activations = args.plot_rgb_activations,
             ministart_addneurons = args.minirestart_addneurons, minirestart_reducenorm=args.minirestart_reducenorm, 
             minirestart_addnoise = args.minirestart_addnoise, minirestart_backtoinit = args.minirestart_backtoinit,
-            eliminate_outliners=args.eliminate_outliners, eliminate_outliners_gamma=args.eliminate_outliners_gamma)
+            eliminate_outliners = args.eliminate_outliners, eliminate_outliners_strategy = args.eliminate_outliners_strategy, 
+            eliminate_outliners_gamma = args.eliminate_outliners_gamma, lr_outliners=args.lr_outliners)
 
     if args.method == "flow":
         main_flow(dataset=args.dataset, arch_id=args.arch_id, loss=args.loss, max_time=args.max_time, tick=args.tick,

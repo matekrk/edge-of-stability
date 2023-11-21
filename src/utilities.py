@@ -66,8 +66,12 @@ def get_gd_optimizer(parameters, opt: str, lr: float, momentum: float) -> Optimi
     elif opt == "nesterov":
         return SGD(parameters, lr=lr, momentum=momentum, nesterov=True)
 
-def save_features(features, step, traj_directory):
-    torch.save(features, f"{traj_directory}/features_{step}.pt")
+def save_features(features, step, traj_directory, path_file=None):
+    if path_file is None:
+        path_file = f"{traj_directory}/features_{step}.pt"
+    else:
+        path_file = f"{traj_directory}/{path_file}.pt"
+    torch.save(features, path_file)
 
 
 def save_files(directory: str, arrays: List[Tuple[str, torch.Tensor]]):

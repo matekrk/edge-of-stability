@@ -14,5 +14,6 @@ upload.sh
 demo.py
 .DS_Store
 .idea
+.vscode
 combine_trainings2.py
 todo.txt

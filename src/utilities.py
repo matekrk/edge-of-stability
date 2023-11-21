@@ -190,21 +190,26 @@ def compute_losses_inout(network: nn.Module, loss_function, acc_function, datase
 
     loss_in, acc_in = 0, 0
     loss_out, acc_out = 0, 0
+    n_in, n_out = 0, 0
     features_in, features_out = [], []
     for (X, y) in iterate_dataset(dataset, batch_size):
         X_in, y_in, X_out, y_out = reduced_batch(network, loss_function, X, y, strategy=strategy, gamma=gamma, complement=True)
+
+        n_inliners, n_outliners = len(X_in), len(X_out)
     
         with torch.no_grad():
             preds_in, feats_in = network(X_in, return_features=True)
             preds_out, feats_out = network(X_out, return_features=True)
             features_in.append(torch.norm(feats_in, p=2, dim=1))
             features_out.append(torch.norm(feats_out, p=2, dim=1))
-            loss_in += loss_function(preds_in, y_in) / len(dataset)
-            loss_out += loss_function(preds_out, y_out) / len(dataset)
-            acc_in += acc_function(preds_in, y_in) / len(dataset)
-            acc_out += acc_function(preds_out, y_out) / len(dataset)
+            loss_in += loss_function(preds_in, y_in)
+            loss_out += loss_function(preds_out, y_out)
+            acc_in += acc_function(preds_in, y_in)
+            acc_out += acc_function(preds_out, y_out)
+            n_in += n_inliners
+            n_out += n_outliners
 
-    return loss_in, acc_in, torch.cat((features_in), 0).cpu().numpy(), loss_out, acc_out, torch.cat((features_out), 0).cpu().numpy()
+    return loss_in/n_in, acc_in/n_in, torch.cat((features_in), 0).cpu().numpy(), n_in, loss_out/n_out, acc_out/n_out, torch.cat((features_out), 0).cpu().numpy(), n_out
 
 def compute_space(network: nn.Module, dataset: Dataset, batch_size: int = DEFAULT_PHYS_BS):
     all_features = []

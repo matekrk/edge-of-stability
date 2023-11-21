@@ -78,12 +78,12 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
         wandb.log({'train/step': step, 'train/acc': train_acc[step], 'train/loss': train_loss[step]})
         wandb.log({'test/step': step, 'test/acc': test_acc[step], 'test/loss': test_loss[step]})
 
-        loss_in, acc_in, features_in, loss_out, acc_out, features_out = compute_losses_inout(network, loss_fn, acc_fn, train_dataset, eliminate_outliners_strategy, eliminate_outliners_gamma, physical_batch_size)
-        loss_in_t, acc_in_t, features_in_t, loss_out_t, acc_out_t, features_out_t = compute_losses_inout(network, loss_fn, acc_fn, test_dataset, eliminate_outliners_strategy, eliminate_outliners_gamma, physical_batch_size)
-        wandb.log({'train/step': step, 'train/acc_in': acc_in, 'train/loss_in': loss_in, 'train/features_norm_in': wandb.Histogram(features_in),
-                   'train/acc_out': acc_out, 'train/loss_out': loss_out, 'train/features_norm_out': wandb.Histogram(features_out)})
-        wandb.log({'test/step': step, 'test/acc_in': acc_in_t, 'test/loss_in': loss_in_t, 'test/features_norm_in': wandb.Histogram(features_in_t),
-                   'test/acc_out': acc_out_t, 'test/loss_out': loss_out_t, 'test/features_norm_out': wandb.Histogram(features_out_t)})
+        loss_in, acc_in, features_in, n_in, loss_out, acc_out, features_out, n_out = compute_losses_inout(network, loss_fn, acc_fn, train_dataset, eliminate_outliners_strategy, eliminate_outliners_gamma, physical_batch_size)
+        wandb.log({'train/step': step, 'train/acc_in': acc_in, 'train/loss_in': loss_in, 'train/features_norm_in': wandb.Histogram(features_in), 'train/n_in': n_in,
+                   'train/acc_out': acc_out, 'train/loss_out': loss_out, 'train/features_norm_out': wandb.Histogram(features_out), 'train/n_out': n_out})
+        loss_in_t, acc_in_t, features_in_t, n_in, loss_out_t, acc_out_t, features_out_t, n_out = compute_losses_inout(network, loss_fn, acc_fn, test_dataset, eliminate_outliners_strategy, eliminate_outliners_gamma, physical_batch_size)
+        wandb.log({'test/step': step, 'test/acc_in': acc_in_t, 'test/loss_in': loss_in_t, 'test/features_norm_in': wandb.Histogram(features_in_t), 'test/n_in': n_in,
+                   'test/acc_out': acc_out_t, 'test/loss_out': loss_out_t, 'test/features_norm_out': wandb.Histogram(features_out_t), 'test/n_in': n_out})
 
         if rgb_activations:
             sky_activations[step], red_activations[step], green_activations[step] = compute_logits(network, [loss_fn, acc_fn])
@@ -159,8 +159,8 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
                 X_in, y_in, X_out, y_out = rez
 
                 optimizer_outliners.zero_grad()
-                loss_outliners = loss_fn(network(X_out), y_out) / len(train_dataset)
-                losses_outliners.append(loss_outliners)
+                loss_outliners = loss_fn(network(X_out), y_out) / len(X_out)
+                losses_outliners.append(loss_outliners.item())
                 loss_outliners.backward()
                 optimizer_outliners.step()
             else:
@@ -169,13 +169,15 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
 
             ratio_inliners.append(len(X_in)/len(X))
             optimizer.zero_grad()
-            loss = loss_fn(network(X_in), y_in) / len(train_dataset)
-            losses_inliners.append(loss.item())
-            loss.backward()
+            loss_inliners = loss_fn(network(X_in), y_in) / len(X_in)
+            losses_inliners.append(loss_inliners.item())
+            loss_inliners.backward()
             optimizer.step()
             
         train_ratio_inliners[step] = sum(ratio_inliners)/len(ratio_inliners)
-        wandb.log({'train/step': step, 'train/ratio_inliners': train_ratio_inliners[step]})
+        wandb.log({'train/step': step, 'train/ratio_inliners': train_ratio_inliners[step], 
+                   'train/mean_loss_inliners': sum(losses_inliners)/len(losses_inliners), 
+                   'train/mean_loss_inliners': sum(losses_outliners)/len(losses_outliners)})
 
     save_files_final(directory,
                      [("eigs", eigs[:(step + 1) // eig_freq]), ("iterates", iterates[:(step + 1) // iterate_freq]),

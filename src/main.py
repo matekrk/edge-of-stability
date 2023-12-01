@@ -46,7 +46,10 @@ if __name__ == "__main__":
     parser.add_argument("--eliminate_outliners_strategy", type=str, choices=["computegradient", "gradient", "fisher", "activation", "feature"], help="How to remove outliners.")
     parser.add_argument("--eliminate_outliners_gamma", type=float, default=1.0,
                         help="how many std to remove when computing the criterion on outliners.")
-    parser.add_argument("--lr_outliners", type=float, help="the learning rate", required='method'=="gd")
+    parser.add_argument("--lr_outliners", type=float, default=0.0, help="the learning rate", required='method'=="gd")
+    parser.add_argument("--eliminate_features", action=argparse.BooleanOptionalAction, help="Eliminate features contributing to EOS.")
+    parser.add_argument("--eliminate_features_gamma", type=float, default=1.0,
+                        help="how many std to remove when computing the criterion on outliners.")
 
     # GD
     #parser.add_argument("--gd", type=bool, default=False, help="if 'true', gradient descent")
@@ -86,7 +89,7 @@ if __name__ == "__main__":
     f = open("wandb_project.txt", "r")
     wandb_project = f.read()
     wandb.login(key=wandb_key)
-    run = wandb.init(project=wandb_project, entity=wandb_entity, config=args, dir=os.environ["RESULTS"])
+    run = wandb.init(project=wandb_project, entity=wandb_entity, config=args, dir=os.environ["RESULTS"], mode="disabled")
 
     if args.method == "gd":
         main_gd(dataset=args.dataset, arch_id=args.arch_id, loss=args.loss, opt=args.opt, lr=args.lr, max_steps=args.max_steps,
@@ -98,7 +101,8 @@ if __name__ == "__main__":
             ministart_addneurons = args.minirestart_addneurons, minirestart_reducenorm=args.minirestart_reducenorm, 
             minirestart_addnoise = args.minirestart_addnoise, minirestart_backtoinit = args.minirestart_backtoinit,
             eliminate_outliners = args.eliminate_outliners, eliminate_outliners_strategy = args.eliminate_outliners_strategy, 
-            eliminate_outliners_gamma = args.eliminate_outliners_gamma, lr_outliners=args.lr_outliners)
+            eliminate_outliners_gamma = args.eliminate_outliners_gamma, lr_outliners=args.lr_outliners,
+            eliminate_features=args.eliminate_features, eliminate_features_gamma=args.eliminate_features_gamma)
 
     if args.method == "flow":
         main_flow(dataset=args.dataset, arch_id=args.arch_id, loss=args.loss, max_time=args.max_time, tick=args.tick,

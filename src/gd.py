@@ -22,7 +22,8 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
          ministart_addneurons: bool = False, minirestart_reducenorm: bool = False, 
          minirestart_addnoise: bool = False, minirestart_backtoinit: bool = False, 
          eliminate_outliners: bool = False, eliminate_outliners_strategy: str = "gradient", 
-         eliminate_outliners_gamma: float = 1.0, lr_outliners: float = 0.0, activations_rgb: bool = True):
+         eliminate_outliners_gamma: float = 1.0, lr_outliners: float = 0.0,
+         eliminate_features: bool = False, eliminate_features_gamma: float = 0.0):
     gamma = eliminate_outliners_gamma if eliminate_outliners else None
     directory = get_gd_directory(dataset, lr, arch_id, seed, opt, loss, beta, gamma)
     makedirs(directory, exist_ok=True)
@@ -45,8 +46,10 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
     optimizer = get_gd_optimizer(network.parameters(), opt, lr, beta)
     if lr_outliners != 0:
         optimizer_outliners = get_gd_optimizer(network.parameters(), opt, lr_outliners, beta)
-    else:
         assert eliminate_outliners
+
+    if eliminate_features:
+        optimizer_f = get_gd_optimizer(network.parameters(), opt, lr, beta)
 
     exploding = -1
 
@@ -78,12 +81,13 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
         wandb.log({'train/step': step, 'train/acc': train_acc[step], 'train/loss': train_loss[step]})
         wandb.log({'test/step': step, 'test/acc': test_acc[step], 'test/loss': test_loss[step]})
 
-        loss_in, acc_in, features_in, n_in, loss_out, acc_out, features_out, n_out = compute_losses_inout(network, loss_fn, acc_fn, train_dataset, eliminate_outliners_strategy, eliminate_outliners_gamma, physical_batch_size)
-        wandb.log({'train/step': step, 'train/acc_in': acc_in, 'train/loss_in': loss_in, 'train/features_norm_in': wandb.Histogram(features_in), 'train/n_in': n_in,
-                   'train/acc_out': acc_out, 'train/loss_out': loss_out, 'train/features_norm_out': wandb.Histogram(features_out), 'train/n_out': n_out})
-        loss_in_t, acc_in_t, features_in_t, n_in, loss_out_t, acc_out_t, features_out_t, n_out = compute_losses_inout(network, loss_fn, acc_fn, test_dataset, eliminate_outliners_strategy, eliminate_outliners_gamma, physical_batch_size)
-        wandb.log({'test/step': step, 'test/acc_in': acc_in_t, 'test/loss_in': loss_in_t, 'test/features_norm_in': wandb.Histogram(features_in_t), 'test/n_in': n_in,
-                   'test/acc_out': acc_out_t, 'test/loss_out': loss_out_t, 'test/features_norm_out': wandb.Histogram(features_out_t), 'test/n_in': n_out})
+        if eliminate_outliners:
+            loss_in, acc_in, features_in, n_in, loss_out, acc_out, features_out, n_out = compute_losses_inout(network, loss_fn, acc_fn, train_dataset, eliminate_outliners_strategy, eliminate_outliners_gamma, physical_batch_size)
+            wandb.log({'train/step': step, 'train/acc_in': acc_in, 'train/loss_in': loss_in, 'train/features_norm_in': wandb.Histogram(features_in), 'train/n_in': n_in,
+                    'train/acc_out': acc_out, 'train/loss_out': loss_out, 'train/features_norm_out': wandb.Histogram(features_out), 'train/n_out': n_out})
+            loss_in_t, acc_in_t, features_in_t, n_in, loss_out_t, acc_out_t, features_out_t, n_out = compute_losses_inout(network, loss_fn, acc_fn, test_dataset, eliminate_outliners_strategy, eliminate_outliners_gamma, physical_batch_size)
+            wandb.log({'test/step': step, 'test/acc_in': acc_in_t, 'test/loss_in': loss_in_t, 'test/features_norm_in': wandb.Histogram(features_in_t), 'test/n_in': n_in,
+                    'test/acc_out': acc_out_t, 'test/loss_out': loss_out_t, 'test/features_norm_out': wandb.Histogram(features_out_t), 'test/n_in': n_out})
 
         if rgb_activations:
             sky_activations[step], red_activations[step], green_activations[step] = compute_logits(network, [loss_fn, acc_fn])
@@ -154,6 +158,22 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
                 rez = reduced_batch(network, loss_fn, X.cuda(), y.cuda(), strategy=eliminate_outliners_strategy, gamma=eliminate_outliners_gamma, complement=flag)
             else:
                 rez = X.cuda(), y.cuda()
+
+            if eliminate_features:
+                out, features = network(X, return_features=True)
+                optimizer_f.zero_grad()
+                loss_f = loss_fn(out, y) / len(X) # with respect of loss or sharpness?
+                loss_f.backward()
+                optimizer_f.step()
+
+                # lenet 6 of 84,120 7 of 84
+
+                grad_wrt_features = []
+
+                sus_params = [] # network.parameters()
+                for param in sus_params:
+                    param.requires_grad = False
+                
             
             if lr_outliners != 0:
                 X_in, y_in, X_out, y_out = rez
@@ -173,6 +193,10 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
             losses_inliners.append(loss_inliners.item())
             loss_inliners.backward()
             optimizer.step()
+
+            if eliminate_features:
+                for param in sus_params:
+                    param.requires_grad = True
             
         train_ratio_inliners[step] = sum(ratio_inliners)/len(ratio_inliners)
         wandb.log({'train/step': step, 'train/ratio_inliners': train_ratio_inliners[step], 
@@ -237,6 +261,9 @@ if __name__ == "__main__":
     parser.add_argument("--eliminate_outliners_strategy", type=str, choices=["computegradient", "gradient", "fisher", "activation", "feature"], help="How to remove outliners.")
     parser.add_argument("--eliminate_outliners_gamma", type=float, default=1.0,
                         help="how many std to remove when computing the criterion on outliners.")
+    parser.add_argument("--eliminate_features", action=argparse.BooleanOptionalAction, help="Eliminate features contributing to EOS.")
+    parser.add_argument("--eliminate_features_gamma", type=float, default=1.0,
+                        help="how many std to remove when computing the criterion on outliners.")
     args = parser.parse_args()
 
     main(dataset=args.dataset, arch_id=args.arch_id, loss=args.loss, opt=args.opt, lr=args.lr, max_steps=args.max_steps,
@@ -247,4 +274,5 @@ if __name__ == "__main__":
          ministart_addneurons = args.minirestart_addneurons, minirestart_reducenorm=args.minirestart_reducenorm, 
          minirestart_addnoise = args.minirestart_addnoise, minirestart_backtoinit = args.minirestart_backtoinit,
          eliminate_outliners=args.eliminate_outliners, eliminate_outliners_strategy=args.eliminate_outliners_strategy, 
-         eliminate_outliners_gamma=args.eliminate_outliners_gamma)
+         eliminate_outliners_gamma=args.eliminate_outliners_gamma, 
+         eliminate_features=args.eliminate_features, eliminate_features_gamma=args.eliminate_features_gamma)

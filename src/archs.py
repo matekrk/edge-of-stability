@@ -5,6 +5,7 @@ import torch.nn as nn
 
 from resnet_cifar import resnet32
 from vgg import vgg11_nodropout, vgg11_nodropout_bn
+from lenet import lenet_mnist
 from data import num_classes, num_input_channels, image_size, num_pixels
 
 _CONV_OPTIONS = {"kernel_size": 3, "padding": 1, "stride": 1}
@@ -47,6 +48,28 @@ def fully_connected_net(dataset_name: str, widths: List[int], activation: str, b
     modules.append(nn.Linear(widths[-1], num_classes(dataset_name), bias=bias))
     return nn.Sequential(*modules)
 
+class Fully_connected_net(nn.Module):
+    def __init__(self, dataset_name: str, widths: List[int], activation: str, bias: bool = True) -> None:
+        super(Fully_connected_net, self).__init__()
+        self.flatten = nn.Flatten()
+        features = []
+        for l in range(len(widths)):
+            prev_width = widths[l - 1] if l > 0 else num_pixels(dataset_name)
+            features.extend([
+                nn.Linear(prev_width, widths[l], bias=bias),
+                get_activation(activation),
+            ])
+        classifier = [nn.Linear(widths[-1], num_classes(dataset_name), bias=bias)]
+        self.features = nn.Sequential(*features)
+        self.classifier = nn.Sequential(*classifier)
+        self.last = self.classifier[-1]
+        self.gradcam = self.features[-2]
+
+    def forward(self, x):
+        x = self.flatten(x)
+        x = self.features(x)
+        x = self.classifier(x)
+        return x
 
 def fully_connected_net_bn(dataset_name: str, widths: List[int], activation: str, bias: bool = True) -> nn.Module:
     modules = [nn.Flatten()]
@@ -59,6 +82,30 @@ def fully_connected_net_bn(dataset_name: str, widths: List[int], activation: str
         ])
     modules.append(nn.Linear(widths[-1], num_classes(dataset_name), bias=bias))
     return nn.Sequential(*modules)
+
+class Fully_connected_net_bn(nn.Module):
+    def __init__(self, dataset_name: str, widths: List[int], activation: str, bias: bool = True) -> None:
+        super(Fully_connected_net_bn, self).__init__()
+        self.flatten = nn.Flatten()
+        features = []
+        for l in range(len(widths)):
+            prev_width = widths[l - 1] if l > 0 else num_pixels(dataset_name)
+            features.extend([
+                nn.Linear(prev_width, widths[l], bias=bias),
+                get_activation(activation),
+                nn.BatchNorm1d(widths[l])
+            ])
+        classifier = [nn.Linear(widths[-1], num_classes(dataset_name), bias=bias)]
+        self.features = nn.Sequential(*features)
+        self.classifier = nn.Sequential(*classifier)
+        self.last = self.classifier[-1]
+        self.gradcam = self.features[-3]
+
+    def forward(self, x):
+        x = self.flatten(x)
+        x = self.features(x)
+        x = self.classifier(x)
+        return x
 
 
 def convnet(dataset_name: str, widths: List[int], activation: str, pooling: str, bias: bool) -> nn.Module:
@@ -76,6 +123,31 @@ def convnet(dataset_name: str, widths: List[int], activation: str, pooling: str,
     modules.append(nn.Linear(widths[-1]*size*size, num_classes(dataset_name)))
     return nn.Sequential(*modules)
 
+class Convnet(nn.Module):
+    def __init__(self, dataset_name: str, widths: List[int], activation: str, pooling: str, bias: bool = True) -> None:
+        super(Convnet, self).__init__()
+        size = image_size(dataset_name)
+        features = []
+        for l in range(len(widths)):
+            prev_width = widths[l - 1] if l > 0 else num_input_channels(dataset_name)
+            features.extend([
+                nn.Conv2d(prev_width, widths[l], bias=bias, **_CONV_OPTIONS),
+                get_activation(activation),
+                get_pooling(pooling),
+            ])
+            size //= 2
+        self.flatten = nn.Flatten()
+        classifier = [nn.Linear(widths[-1]*size*size, num_classes(dataset_name))]
+        self.features = nn.Sequential(*features)
+        self.classifier = nn.Sequential(*classifier)
+        self.last = self.classifier[-1]
+        self.gradcam = self.features[-3]
+
+    def forward(self, x):
+        x = self.features(x)
+        x = self.flatten(x)
+        x = self.classifier(x)
+        return x
 
 def convnet_bn(dataset_name: str, widths: List[int], activation: str, pooling: str, bias: bool) -> nn.Module:
     modules = []
@@ -92,6 +164,33 @@ def convnet_bn(dataset_name: str, widths: List[int], activation: str, pooling: s
     modules.append(nn.Flatten())
     modules.append(nn.Linear(widths[-1]*size*size, num_classes(dataset_name)))
     return nn.Sequential(*modules)
+
+class Convnet_bn(nn.Module):
+    def __init__(self, dataset_name: str, widths: List[int], activation: str, pooling: str, bias: bool = True) -> None:
+        super(Convnet_bn, self).__init__()
+        size = image_size(dataset_name)
+        features = []
+        for l in range(len(widths)):
+            prev_width = widths[l - 1] if l > 0 else num_input_channels(dataset_name)
+            features.extend([
+                nn.Conv2d(prev_width, widths[l], bias=bias, **_CONV_OPTIONS),
+                get_activation(activation),
+                nn.BatchNorm2d(widths[l]),
+                get_pooling(pooling),
+            ])
+            size //= 2
+        self.flatten = nn.Flatten()
+        classifier = [nn.Linear(widths[-1]*size*size, num_classes(dataset_name))]
+        self.features = nn.Sequential(*features)
+        self.classifier = nn.Sequential(*classifier)
+        self.last = self.classifier[-1]
+        self.gradcam = self.features[-4]
+
+    def forward(self, x):
+        x = self.features(x)
+        x = self.flatten(x)
+        x = self.classifier(x)
+        return x
 
 def make_deeplinear(L: int, d: int, seed=8):
     torch.manual_seed(seed)
@@ -116,14 +215,15 @@ def make_one_layer_network(h=10, seed=0, activation='tanh', sigma_w=1.9):
     return network
 
 
-def load_architecture(arch_id: str, dataset_name: str) -> nn.Module:
+def load_architecture(arch_id: str, dataset_name: str, dynamic=False) -> nn.Module:
     #  ======   fully-connected networks =======
     if arch_id == 'fc-relu':
         return fully_connected_net(dataset_name, [200, 200], 'relu', bias=True)
     elif arch_id == 'fc-elu':
         return fully_connected_net(dataset_name, [200, 200], 'elu', bias=True)
     elif arch_id == 'fc-tanh':
-        return fully_connected_net(dataset_name, [200, 200], 'tanh', bias=True)
+        return Fully_connected_net(dataset_name, [200, 200], 'tanh', bias=True)
+        # return fully_connected_net(dataset_name, [200, 200], 'tanh', bias=True)
     elif arch_id == 'fc-hardtanh':
         return fully_connected_net(dataset_name, [200, 200], 'hardtanh', bias=True)
     elif arch_id == 'fc-softplus':
@@ -131,7 +231,8 @@ def load_architecture(arch_id: str, dataset_name: str) -> nn.Module:
 
     #  ======   convolutional networks =======
     elif arch_id == 'cnn-relu':
-        return convnet(dataset_name, [32, 32], activation='relu', pooling='max', bias=True)
+        return Convnet(dataset_name, [32, 32], activation='relu', pooling='max', bias=True)
+        # return convnet(dataset_name, [32, 32], activation='relu', pooling='max', bias=True)
     elif arch_id == 'cnn-elu':
         return convnet(dataset_name, [32, 32], activation='elu', pooling='max', bias=True)
     elif arch_id == 'cnn-tanh':
@@ -158,6 +259,10 @@ def load_architecture(arch_id: str, dataset_name: str) -> nn.Module:
         return vgg11_nodropout()
     elif arch_id == 'vgg11-bn':
         return vgg11_nodropout_bn()
+    
+    #  ======   real networks on MNIST  =======
+    elif arch_id == 'lenet':
+        return lenet_mnist(dynamic)
 
     # ====== additional networks ========
     # elif arch_id == 'transformer':

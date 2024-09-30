@@ -12,6 +12,12 @@ from utilities import get_flow_directory, get_loss_and_acc, compute_losses, \
     save_files, save_files_final, AtParams, compute_gradient, get_hessian_eigenvalues, DEFAULT_PHYS_BS
 from data import load_dataset, take_first
 
+def train():
+    pass
+
+def plot():
+    pass
+
 
 def rk_step(network: nn.Module, loss_fn: nn.Module, dataset: Dataset, step_size: float,
             physical_batch_size: int = DEFAULT_PHYS_BS):

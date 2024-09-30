@@ -10,13 +10,23 @@ The structure of this README is:
 2. [Quick start](#quick-start)
 3. [Complete documentation](#complete-documentation)
 
+### Cheat-sheet
+```
+nohup python src/main.py train gd mnist-5k lenet mse --seed 0 --physical_batch_size 1000 --acc_goal 0.9 --load_step 0 --opt sgd --lr 1.0 --max_steps 10000 --neigs 2 --eig_freq 1 --nproj 2 --iterate_freq 1 --abridged_size 5000 --no_wandb > outputs/mnist.sh &
+nohup python src/main.py train gd mnist-5k lenet mse --seed 0 --physical_batch_size 1000 --acc_goal 0.9 --load_step 0 --opt sgd --lr 1.0 --max_steps 10000 --neigs 2 --eig_freq 1 --nproj 2 --iterate_freq 1 --abridged_size 5000 --eliminate_outliners_data --eliminate_outliners_data_gamma 1.0 --eliminate_outliners_data_lr 0.1 > outputs/mnist.sh &
+nohup python src/main.py train gd cifar10-5k vgg11 mse --seed 2 --physical_batch_size 1000 --acc_goal 0.9 --load_step 0 --opt sgd --lr 0.1 --max_
+steps 10000 --neigs 2 --eig_freq 1 --abridged_size 5000 --eliminate_outliners_data --eliminate_outliners_data_gamma 1.0 --eliminate_outliners_data_lr 0.1 > outputs/cifar10.sh &
+```
+
 ### Preliminaries
 
-To run the code, you need to set two environment variables:
-1. Set the `DATASETS` environment variable to a directory where datasets will be stored.
- For example: `export DATASET="/my/directory/datasets"`.
-2. Set the `RESULTS` environment variable to a directory where results will be stored.
- For example: `export RESULTS="/my/directory/results"`.
+Log in to wandb account or use --no_wandb flag.
+
+In data store mnist/cifar10/synbols [soon]
+
+Create directories outputs to keep track of models and results to save the models
+
+Conda environment saved in envorinment.yml file
 
 ### Quick start
 

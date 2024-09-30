@@ -1,6 +1,6 @@
 from os import makedirs
 
-from data import DATASETS
+from data_generic import DATASETS, load_dataset, take_first
 import torch
 import torch.nn as nn
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
@@ -10,7 +10,12 @@ import argparse
 from archs import load_architecture
 from utilities import get_flow_directory, get_loss_and_acc, compute_losses, \
     save_files, save_files_final, AtParams, compute_gradient, get_hessian_eigenvalues, DEFAULT_PHYS_BS
-from data import load_dataset, take_first
+
+def train():
+    pass
+
+def plot():
+    pass
 
 
 def rk_step(network: nn.Module, loss_fn: nn.Module, dataset: Dataset, step_size: float,

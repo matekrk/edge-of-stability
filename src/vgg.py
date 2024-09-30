@@ -28,7 +28,9 @@ class VGG(nn.Module):
             nn.ReLU(True),
             nn.Linear(512, 10),
         )
-         # Initialize weights
+        self.last = self.classifier[-1]
+        self.gradcam = self.features[-3]
+        # Initialize weights
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
@@ -56,7 +58,9 @@ class VGGNoDropout(nn.Module):
             nn.ReLU(True),
             nn.Linear(512, 10),
         )
-         # Initialize weights
+        self.last = self.classifier[-1]
+        self.gradcam = self.features[-3]
+        # Initialize weights
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
@@ -98,20 +102,195 @@ cfg = {
 
 
 def vgg11():
-    """VGG 11-layer model (configuration "A")"""
+    """
+    VGG 11-layer model (configuration "A")
+
+    VGG(
+    (features): Sequential(
+        (0): Conv2d(3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (1): ReLU(inplace=True)
+        (2): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+        (3): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (4): ReLU(inplace=True)
+        (5): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+        (6): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (7): ReLU(inplace=True)
+        (8): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (9): ReLU(inplace=True)
+        (10): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+        (11): Conv2d(256, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (12): ReLU(inplace=True)
+        (13): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (14): ReLU(inplace=True)
+        (15): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+        (16): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (17): ReLU(inplace=True)
+        (18): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (19): ReLU(inplace=True)
+        (20): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+    )
+    (classifier): Sequential(
+        (0): Dropout(p=0.5, inplace=False)
+        (1): Linear(in_features=512, out_features=512, bias=True)
+        (2): ReLU(inplace=True)
+        (3): Dropout(p=0.5, inplace=False)
+        (4): Linear(in_features=512, out_features=512, bias=True)
+        (5): ReLU(inplace=True)
+        (6): Linear(in_features=512, out_features=10, bias=True)
+    )
+    (last): Linear(in_features=512, out_features=10, bias=True)
+    (gradcam): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+    )
+    ==========================================================================================
+    Total params: 9750922
+    """
     return VGG(make_layers(cfg['A']))
 
 def vgg11_nodropout():
-    """VGG 11-layer model (configuration "A")"""
+    """
+    VGG 11-layer model (configuration "A")
+
+    VGGNoDropout(
+    (features): Sequential(
+        (0): Conv2d(3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (1): ReLU(inplace=True)
+        (2): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+        (3): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (4): ReLU(inplace=True)
+        (5): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+        (6): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (7): ReLU(inplace=True)
+        (8): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (9): ReLU(inplace=True)
+        (10): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+        (11): Conv2d(256, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (12): ReLU(inplace=True)
+        (13): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (14): ReLU(inplace=True)
+        (15): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+        (16): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (17): ReLU(inplace=True)
+        (18): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (19): ReLU(inplace=True)
+        (20): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+    )
+    (classifier): Sequential(
+        (0): Linear(in_features=512, out_features=512, bias=True)
+        (1): ReLU(inplace=True)
+        (2): Linear(in_features=512, out_features=512, bias=True)
+        (3): ReLU(inplace=True)
+        (4): Linear(in_features=512, out_features=10, bias=True)
+    )
+    (last): Linear(in_features=512, out_features=10, bias=True)
+    (gradcam): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+    ==========================================================================================
+    Total params: 9750922
+    """
     return VGGNoDropout(make_layers(cfg['A']))
 
 def vgg11_bn():
-    """VGG 11-layer model (configuration "A") with batch normalization"""
+    """
+    VGG 11-layer model (configuration "A") with batch normalization
+    
+    VGG(
+    (features): Sequential(
+        (0): Conv2d(3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (2): ReLU(inplace=True)
+        (3): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+        (4): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (5): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (6): ReLU(inplace=True)
+        (7): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+        (8): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (9): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (10): ReLU(inplace=True)
+        (11): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (12): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (13): ReLU(inplace=True)
+        (14): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+        (15): Conv2d(256, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (16): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (17): ReLU(inplace=True)
+        (18): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (19): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (20): ReLU(inplace=True)
+        (21): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+        (22): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (23): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (24): ReLU(inplace=True)
+        (25): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (26): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (27): ReLU(inplace=True)
+        (28): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+    )
+    (classifier): Sequential(
+        (0): Dropout(p=0.5, inplace=False)
+        (1): Linear(in_features=512, out_features=512, bias=True)
+        (2): ReLU(inplace=True)
+        (3): Dropout(p=0.5, inplace=False)
+        (4): Linear(in_features=512, out_features=512, bias=True)
+        (5): ReLU(inplace=True)
+        (6): Linear(in_features=512, out_features=10, bias=True)
+    )
+    (last): Linear(in_features=512, out_features=10, bias=True)
+    (gradcam): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    )
+    ==========================================================================================
+    Total params: 9756426
+  """
     return VGG(make_layers(cfg['A'], batch_norm=True))
 
 
 def vgg11_nodropout_bn():
-    """VGG 11-layer model (configuration "A") with batch normalization"""
+    """
+    VGG 11-layer model (configuration "A") with batch normalization
+
+    VGGNoDropout(
+    (features): Sequential(
+        (0): Conv2d(3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (2): ReLU(inplace=True)
+        (3): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+        (4): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (5): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (6): ReLU(inplace=True)
+        (7): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+        (8): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (9): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (10): ReLU(inplace=True)
+        (11): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (12): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (13): ReLU(inplace=True)
+        (14): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+        (15): Conv2d(256, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (16): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (17): ReLU(inplace=True)
+        (18): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (19): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (20): ReLU(inplace=True)
+        (21): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+        (22): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (23): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (24): ReLU(inplace=True)
+        (25): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+        (26): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (27): ReLU(inplace=True)
+        (28): MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+    )
+    (classifier): Sequential(
+        (0): Linear(in_features=512, out_features=512, bias=True)
+        (1): ReLU(inplace=True)
+        (2): Linear(in_features=512, out_features=512, bias=True)
+        (3): ReLU(inplace=True)
+        (4): Linear(in_features=512, out_features=10, bias=True)
+    )
+    (last): Linear(in_features=512, out_features=10, bias=True)
+    (gradcam): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+    )
+    ==========================================================================================
+    Total params: 9756426
+    """
     return VGGNoDropout(make_layers(cfg['A'], batch_norm=True))
 
 

@@ -8,9 +8,14 @@ demo.py
 data
 outputs
 results
+trak_results
+trak_results_worksuntil3
+subets_results
 figures
 mnist_samples
 cifar_samples
+
+todo.txt
 
 wandb_entity.txt
 wandb_key.txt
